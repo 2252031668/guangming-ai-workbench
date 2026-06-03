@@ -1,0 +1,386 @@
+{% extends "base.html" %}
+{% set title = "知识库 - 光明科研工作台" %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>知识库</h1>
+    <p>查看当前项目已导入文献，并管理状态、摘要与后续研读入口。</p>
+  </div>
+  <div class="page-head-actions">
+    {% if current_project %}
+      <span class="badge">当前项目：{{ current_project.name }}</span>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel table-panel">
+  <div class="table-toolbar">
+    <div class="toolbar-actions">
+      <button class="ghost-btn small" type="button" data-open-import-modal>导入文献</button>
+      <button class="ghost-btn small" type="button" data-bulk-action data-pdf-lookup data-pdf-lookup-run-url="{{ url_for('run_pdf_lookup', project_id=current_project.id) if current_project else '' }}" data-pdf-lookup-status-url="{{ url_for('pdf_lookup_status', project_id=current_project.id) if current_project else '' }}" data-pdf-lookup-stop-url="{{ url_for('stop_pdf_lookup', project_id=current_project.id) if current_project else '' }}" disabled>PDF 查找</button>
+      <button class="ghost-btn small" type="button" data-bulk-action disabled>信息补全</button>
+      <button class="ghost-btn small" type="button" data-bulk-action data-download-pdfs data-pdf-download-run-url="{{ url_for('run_pdf_download', project_id=current_project.id) if current_project else '' }}" data-pdf-download-status-url="{{ url_for('pdf_download_status', project_id=current_project.id) if current_project else '' }}" data-pdf-download-stop-url="{{ url_for('stop_pdf_download', project_id=current_project.id) if current_project else '' }}" disabled>下载 PDF</button>
+      <button class="ghost-btn small" type="button" data-bulk-action data-bibtex-export data-bibtex-run-url="{{ url_for('run_bibtex_export', project_id=current_project.id) if current_project else '' }}" data-bibtex-status-url="{{ url_for('bibtex_status', project_id=current_project.id) if current_project else '' }}" data-bibtex-stop-url="{{ url_for('stop_bibtex_export', project_id=current_project.id) if current_project else '' }}" disabled>BibTeX 补全并导出</button>
+      <a class="ghost-btn small" href="{{ url_for('search') }}">继续导入</a>
+    </div>
+    <div class="selection-summary" data-selection-summary>未选择文献</div>
+  </div>
+
+  {% if rows %}
+  <div class="library-table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th class="select-col">
+          <label class="check-wrap" title="全选">
+            <input type="checkbox" data-select-all>
+          </label>
+        </th>
+        <th>标题</th>
+        <th>年份</th>
+        <th>标签</th>
+        <th>备注</th>
+        <th>来源</th>
+        <th>PDF</th>
+        <th>BibTeX</th>
+        <th>文献矩阵</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr class="click-row" onclick="window.location='{{ url_for('reading', paper_id=row.paper_id) }}'">
+        <td class="select-col">
+          <label class="check-wrap" onclick="event.stopPropagation()">
+            <input type="checkbox" value="{{ row.paper_id }}" data-paper-select>
+          </label>
+        </td>
+        <td>{{ row.title }}</td>
+        <td>{{ row.year }}</td>
+        <td>
+          <button class="tag-cell tag-picker-trigger" type="button" title="选择标签" data-tag-cell data-edit-tags data-paper-id="{{ row.paper_id }}" data-update-url="{{ url_for('update_paper', project_id=current_project.id, paper_id=row.paper_id) }}" data-delete-tag-url="{{ url_for('delete_tag', project_id=current_project.id) }}" data-tags="{{ row.tags | join(',') }}" data-custom-tags='{{ project_tags | tojson }}'>
+            <div class="tag-list">
+              {% for tag in row.tags %}
+              <span class="library-tag" style="{{ tag_style(tag, project_tags) }}">{{ tag }}</span>
+              {% endfor %}
+              {% if not row.tags %}
+              <span class="muted-inline">未标注</span>
+              {% endif %}
+            </div>
+          </button>
+        </td>
+        <td>
+          <button class="notes-cell notes-edit-trigger" type="button" title="编辑备注" data-edit-notes data-update-url="{{ url_for('update_paper', project_id=current_project.id, paper_id=row.paper_id) }}" data-notes="{{ row.notes }}">
+            <span data-notes-text>{{ row.notes or "无备注" }}</span>
+            <span class="inline-edit-mark">✎</span>
+          </button>
+        </td>
+        <td>{{ row.venue }}</td>
+        <td data-pdf-cell="{{ row.paper_id }}" data-open-pdf-url="{{ url_for('open_pdf', project_id=current_project.id, paper_id=row.paper_id) }}">
+          <div class="pdf-cell">
+            {% if row.pdf_status in ["已下载", "手动导入"] and row.pdf_path %}
+            <a class="ghost-btn small" href="{{ url_for('open_pdf', project_id=current_project.id, paper_id=row.paper_id) }}" target="_blank" onclick="event.stopPropagation()" title="打开本地 PDF">打开</a>
+            {% else %}
+            <span>{{ row.pdf_status }}</span>
+            {% endif %}
+            <form class="pdf-upload-form" action="{{ url_for('upload_pdf', project_id=current_project.id, paper_id=row.paper_id) }}" method="post" enctype="multipart/form-data" onclick="event.stopPropagation()">
+              <input type="file" name="pdf_file" accept="application/pdf,.pdf" data-pdf-upload-input hidden>
+              <button class="icon-action-btn" type="button" title="手动导入 PDF" aria-label="手动导入 PDF" data-pdf-upload-button>↑</button>
+            </form>
+          </div>
+        </td>
+        <td data-bibtex-cell="{{ row.paper_id }}">{{ row.bibtex_status or "未生成" }}</td>
+        <td data-matrix-cell="{{ row.paper_id }}">
+          {% if row.has_structured_reading %}
+          <span class="matrix-check" title="已生成文献矩阵">√</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty-state">当前项目还没有文献，先去文献检索页导入样例文献。</div>
+  {% endif %}
+  <div class="task-progress-status {% if active_pdf_lookup_task %}is-active{% endif %}" data-pdf-lookup-status-box data-progress-kind="pdf-lookup">
+    {% if active_pdf_lookup_task %}
+    <div class="matrix-progress-head">
+      <strong>正在查找开放 PDF</strong>
+      <span>{{ active_pdf_lookup_task.completed or 0 }} / {{ active_pdf_lookup_task.total or 0 }}</span>
+      <button class="progress-close-btn" type="button" data-dismiss-progress aria-label="隐藏进度">×</button>
+    </div>
+    <div class="matrix-progress-bar">
+      {% set total = active_pdf_lookup_task.total or 0 %}
+      {% set completed = active_pdf_lookup_task.completed or 0 %}
+      <span style="width: {{ (completed * 100 / total) if total else 0 }}%"></span>
+    </div>
+    <div class="task-event-list" data-pdf-lookup-events>
+      {% if active_pdf_lookup_task.events %}
+        {% for event in active_pdf_lookup_task.events[-6:] %}
+        <div class="task-event-item">{{ event.message }}</div>
+        {% endfor %}
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div class="task-progress-status {% if active_pdf_download_task %}is-active{% endif %}" data-pdf-download-status-box data-progress-kind="pdf-download">
+    {% if active_pdf_download_task %}
+    <div class="matrix-progress-head">
+      <strong>正在下载 PDF</strong>
+      <span>{{ active_pdf_download_task.completed or 0 }} / {{ active_pdf_download_task.total or 0 }}</span>
+      <button class="progress-close-btn" type="button" data-dismiss-progress aria-label="隐藏进度">×</button>
+    </div>
+    <div class="matrix-progress-bar">
+      {% set total = active_pdf_download_task.total or 0 %}
+      {% set completed = active_pdf_download_task.completed or 0 %}
+      <span style="width: {{ (completed * 100 / total) if total else 0 }}%"></span>
+    </div>
+    <div class="task-event-list" data-pdf-download-events>
+      {% if active_pdf_download_task.events %}
+        {% for event in active_pdf_download_task.events[-6:] %}
+        <div class="task-event-item">{{ event.message }}</div>
+        {% endfor %}
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div class="task-progress-status {% if active_bibtex_task %}is-active{% endif %}" data-bibtex-status-box data-progress-kind="bibtex">
+    {% if active_bibtex_task %}
+    <div class="matrix-progress-head">
+      <strong>正在补全并导出 BibTeX</strong>
+      <span>{{ active_bibtex_task.completed or 0 }} / {{ active_bibtex_task.total or 0 }}</span>
+      <button class="progress-close-btn" type="button" data-dismiss-progress aria-label="隐藏进度">×</button>
+    </div>
+    <div class="matrix-progress-bar">
+      {% set total = active_bibtex_task.total or 0 %}
+      {% set completed = active_bibtex_task.completed or 0 %}
+      <span style="width: {{ (completed * 100 / total) if total else 0 }}%"></span>
+    </div>
+    <div class="task-event-list" data-bibtex-events>
+      {% if active_bibtex_task.events %}
+        {% for event in active_bibtex_task.events[-6:] %}
+        <div class="task-event-item">{{ event.message }}</div>
+        {% endfor %}
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+{% if current_project %}
+<div class="import-modal-overlay {% if import_drafts or active_import_task %}is-open{% endif %}" data-import-modal data-run-url="{{ url_for('run_imports', project_id=current_project.id) }}" data-status-url="{{ url_for('import_status', project_id=current_project.id) }}" data-confirm-url="{{ url_for('confirm_imports', project_id=current_project.id) }}" data-cancel-url="{{ url_for('cancel_imports', project_id=current_project.id) }}">
+  <section class="import-modal-card" role="dialog" aria-modal="true" aria-label="导入文献">
+    <div class="import-modal-head">
+      <div>
+        <h2>导入文献</h2>
+        <p>输入 DOI/论文题名，或批量上传 PDF。系统会先补全到暂存区，确认后再进入知识库。</p>
+      </div>
+      <button class="progress-close-btn" type="button" data-close-import-modal aria-label="关闭">×</button>
+    </div>
+
+    <form class="import-form" data-import-form>
+      <label class="meta-editor-field">
+        <span>题名或 DOI，一行一个</span>
+        <textarea name="lines_text" rows="5" placeholder="10.48550/arXiv.2307.15818&#10;RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control"></textarea>
+      </label>
+      <label class="meta-editor-field">
+        <span>批量上传 PDF</span>
+        <div class="import-file-picker">
+          <input type="file" name="pdf_files" accept="application/pdf,.pdf" multiple data-import-file-input>
+          <button class="ghost-btn small" type="button" data-import-file-button>选择 PDF 文件</button>
+          <strong data-import-file-summary>尚未选择文件</strong>
+        </div>
+      </label>
+      <div class="import-actions">
+        <button class="ghost-btn small" type="submit" data-start-import>开始解析</button>
+        <button class="ghost-btn small danger" type="button" data-cancel-import>取消并清空</button>
+      </div>
+    </form>
+
+    <div class="task-progress-status {% if active_import_task %}is-active{% endif %}" data-import-status-box data-progress-kind="import">
+      {% if active_import_task %}
+      <div class="matrix-progress-head">
+        <strong>正在补全文献信息</strong>
+        <span>{{ active_import_task.completed or 0 }} / {{ active_import_task.total or 0 }}</span>
+      </div>
+      <div class="matrix-progress-bar">
+        {% set total = active_import_task.total or 0 %}
+        {% set completed = active_import_task.completed or 0 %}
+        <span style="width: {{ (completed * 100 / total) if total else 0 }}%"></span>
+      </div>
+      <div class="task-event-list" data-import-events>
+        {% if active_import_task.events %}
+          {% for event in active_import_task.events[-6:] %}
+          <div class="task-event-item">{{ event.message }}</div>
+          {% endfor %}
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="import-draft-list" data-import-draft-list>
+      {% for draft in import_drafts %}
+      <article class="import-draft-card {{ draft.status }}" data-draft-id="{{ draft.draft_id }}">
+        <label class="check-wrap">
+          <input type="checkbox" data-import-draft-check value="{{ draft.draft_id }}" {% if draft.status != "ready" %}disabled{% endif %}>
+        </label>
+        <div>
+          <strong>{{ draft.metadata.title or draft.raw_input }}</strong>
+          <span>{{ draft.status }}{% if draft.error %} · {{ draft.error }}{% endif %}</span>
+          {% if draft.metadata %}
+          <small>{{ draft.metadata.year or "未知年份" }} · {{ draft.metadata.venue or "未知来源" }} · {{ draft.metadata.doi or "无 DOI" }}</small>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+
+    <div class="import-confirm-row">
+      <span data-import-summary>选择解析成功的暂存项后导入知识库。</span>
+      <button class="ghost-btn small" type="button" data-confirm-import>确认导入知识库</button>
+    </div>
+  </section>
+</div>
+{% endif %}
+
+{% if current_project %}
+<section class="search-agent-panel library-qa-panel {% if library_chat_messages or active_library_chat_task %}has-chat{% else %}is-empty{% endif %}">
+  {% if library_chat_messages or active_library_chat_task %}
+  <div class="chat-window" data-library-chat-window>
+    {% if library_chat_messages %}
+      {% for message in library_chat_messages %}
+      {% if message.role == "divider" %}
+      <div class="chat-divider">
+        <span>{{ message.content }}</span>
+      </div>
+      {% else %}
+      <article class="chat-message {{ message.role }}">
+        <div class="chat-avatar">{{ "我" if message.role == "user" else "光" }}</div>
+        <div class="chat-bubble">
+          <div class="chat-meta">
+            <span>{{ "知识库问答" if message.role == "assistant" else "我的问题" }}</span>
+            <time>{{ message.created_at }}</time>
+          </div>
+          {% if message.role == "assistant" %}
+          <div class="markdown-body" data-markdown>{{ message.content }}</div>
+          {% else %}
+          <p>{{ message.content }}</p>
+          {% endif %}
+          {% if message.selected_paper_ids %}
+          <div class="chat-result-line">本轮关联 {{ message.selected_paper_ids|length }} 篇勾选文献</div>
+          {% endif %}
+        </div>
+      </article>
+      {% endif %}
+      {% endfor %}
+      {% if active_library_chat_task %}
+      <article class="chat-message assistant running">
+        <div class="chat-avatar">光</div>
+        <div class="chat-bubble">
+          <div class="chat-meta">
+            <span>知识库问答</span>
+            <time>{{ active_library_chat_task.started_at }}</time>
+          </div>
+          <p>正在围绕 {{ active_library_chat_task.selected_paper_ids|length }} 篇勾选文献回答问题。</p>
+          <div class="chat-result-line loading-line">
+            <span class="loading-dot"></span>
+            问答中，请稍候
+          </div>
+          <div class="task-event-list" data-library-task-events>
+          {% if active_library_chat_task.events %}
+            {% for event in active_library_chat_task.events[-6:] %}
+            <div class="task-event-item">{{ event.message }}</div>
+            {% endfor %}
+          {% endif %}
+          </div>
+        </div>
+      </article>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <form class="task-panel page-task-panel library-chat-form" method="post" action="{{ url_for('run_library_chat', project_id=current_project.id) }}" data-library-chat-form data-project-id="{{ current_project.id }}" data-status-url="{{ url_for('library_chat_status', project_id=current_project.id) }}" data-reset-url="{{ url_for('reset_library_chat', project_id=current_project.id) }}" data-stop-url="{{ url_for('stop_library_chat', project_id=current_project.id) }}">
+    <div data-library-selected-inputs></div>
+    <textarea name="user_question" placeholder="针对上方勾选文献提问，例如：请比较这些论文的方法差异，并指出哪篇最适合作为综述重点。" {% if active_library_chat_task %}readonly{% endif %}></textarea>
+    <div class="task-actions">
+      <span class="pill primary">知识库问答</span>
+      <span class="pill" data-chat-selection-hint>请先勾选文献</span>
+    </div>
+    <div class="library-chat-controls">
+      <button class="reset-chat-btn" type="button" data-reset-library-chat aria-label="重置对话" title="重置对话，清空本轮线程记忆">重置</button>
+      {% if active_library_chat_task %}
+      <button class="send-btn stop-send-btn" type="button" data-stop-library-chat aria-label="停止本次问答" title="停止本次问答">
+        <span class="stop-icon"></span>
+      </button>
+      {% else %}
+      <button class="send-btn" type="submit" aria-label="发送知识库问题" title="发送知识库问题">➤</button>
+      {% endif %}
+    </div>
+  </form>
+</section>
+{% endif %}
+
+{% if current_project %}
+<section class="matrix-workbench panel" id="matrix" data-reading-matrix-panel data-project-id="{{ current_project.id }}" data-fields-url="{{ url_for('update_reading_matrix_fields', project_id=current_project.id) }}" data-recommend-url="{{ url_for('recommend_reading_matrix_fields', project_id=current_project.id) }}" data-run-url="{{ url_for('run_reading_matrix', project_id=current_project.id) }}" data-status-url="{{ url_for('reading_matrix_status', project_id=current_project.id) }}" data-stop-url="{{ url_for('stop_reading_matrix', project_id=current_project.id) }}">
+  <div class="panel-head">
+    <div>
+      <h2>文献矩阵</h2>
+      <p>配置文献矩阵字段，并对上方勾选且已下载 PDF 的论文逐篇生成 reading.json。</p>
+    </div>
+    <div class="matrix-actions">
+      <button class="ghost-btn small" type="button" data-add-matrix-field>新增字段</button>
+      <button class="ghost-btn small" type="button" data-recommend-matrix-fields>AI 推荐字段</button>
+      <button class="ghost-btn small" type="button" data-save-matrix-fields>保存字段</button>
+      {% if active_reading_matrix_task %}
+      <button class="send-btn stop-send-btn" type="button" data-stop-reading-matrix aria-label="停止文献矩阵任务" title="停止文献矩阵任务">
+        <span class="stop-icon"></span>
+      </button>
+      {% else %}
+      <button class="send-btn" type="button" data-run-reading-matrix aria-label="运行文献矩阵" title="运行文献矩阵">➤</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="matrix-field-list" data-matrix-field-list>
+    {% for field in reading_matrix_fields %}
+    <article class="matrix-field-card" data-field-id="{{ field.field_id }}">
+      <label>
+        <span>字段名称</span>
+        <input value="{{ field.name }}" data-matrix-field-name>
+      </label>
+      <label>
+        <span>判断依据和格式要求</span>
+        <textarea data-matrix-field-rule>{{ field.rule }}</textarea>
+      </label>
+      <button class="icon-action-btn danger" type="button" data-delete-matrix-field title="删除字段">×</button>
+    </article>
+    {% endfor %}
+  </div>
+
+  <div class="matrix-status" data-reading-matrix-status data-progress-kind="reading-matrix">
+    {% if active_reading_matrix_task %}
+    <div class="matrix-progress-head">
+      <strong>正在生成文献矩阵</strong>
+      <span>{{ active_reading_matrix_task.completed or 0 }} / {{ active_reading_matrix_task.total or 0 }}</span>
+      <button class="progress-close-btn" type="button" data-dismiss-progress aria-label="隐藏进度">×</button>
+    </div>
+    <div class="matrix-progress-bar">
+      {% set total = active_reading_matrix_task.total or 0 %}
+      {% set completed = active_reading_matrix_task.completed or 0 %}
+      <span style="width: {{ (completed * 100 / total) if total else 0 }}%"></span>
+    </div>
+    <div class="task-event-list" data-reading-matrix-events>
+      {% if active_reading_matrix_task.events %}
+        {% for event in active_reading_matrix_task.events[-6:] %}
+        <div class="task-event-item">{{ event.message }}</div>
+        {% endfor %}
+      {% endif %}
+    </div>
+    {% else %}
+    <span>先勾选已下载 PDF 的论文，再运行文献矩阵。</span>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

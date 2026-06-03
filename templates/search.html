@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% set title = "文献检索 - 光明 AI 学术工作台" %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>文献检索</h1>
+    <p>围绕研究主题检索候选文献，并导入当前项目形成本地知识库。</p>
+  </div>
+  <div class="page-head-actions">
+    {% if current_project %}
+      <span class="badge">当前项目：{{ current_project.name }}</span>
+    {% else %}
+      <span class="badge">请先创建项目</span>
+    {% endif %}
+  </div>
+</section>
+
+<section class="search-agent-panel">
+  <div class="chat-window">
+    {% if chat_messages %}
+      {% for message in chat_messages %}
+      <article class="chat-message {{ message.role }}">
+        <div class="chat-avatar">{{ "我" if message.role == "user" else "光" }}</div>
+        <div class="chat-bubble">
+          <div class="chat-meta">
+            {% if message.role == "user" %}
+            <span>{{ message.search_mode_label or ("深度检索" if message.search_mode == "deep" else "快速检索" if message.search_mode == "quick" else "用户输入") }}</span>
+            {% else %}
+            <span>光明 {{ message.search_mode_label or ("深度检索" if message.search_mode == "deep" else "快速检索" if message.search_mode == "quick" else "Academic Search") }}</span>
+            {% endif %}
+            <time>{{ message.created_at }}</time>
+          </div>
+          {% if message.role == "assistant" %}
+          <div class="markdown-body" data-markdown>{{ message.content }}</div>
+          {% else %}
+          <p>{{ message.content }}</p>
+          {% endif %}
+          {% if message.inserted_count is defined %}
+          <div class="chat-result-line">
+            新增 {{ message.inserted_count }} 篇候选，当前候选池 {{ message.candidate_count }} 篇。
+          </div>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+      {% if active_search_task %}
+      <article class="chat-message assistant running">
+        <div class="chat-avatar">光</div>
+        <div class="chat-bubble">
+          <div class="chat-meta">
+            <span>光明 {{ active_search_task.search_mode_label or ("深度检索" if active_search_task.search_mode == "deep" else "快速检索") }}</span>
+            <time>{{ active_search_task.started_at }}</time>
+          </div>
+          {% if active_search_task.search_mode == "quick" %}
+          <p>正在快速检索「{{ active_search_task.user_request }}」。会快速理解你的检索要求，生成简化候选条目并合并到候选池。</p>
+          {% else %}
+          <p>正在深度检索「{{ active_search_task.user_request }}」。会结合仓库内 academic-search-only 能力生成更规范的候选文献 JSON，并自动更新候选池。</p>
+          {% endif %}
+          <div class="chat-result-line loading-line">
+            <span class="loading-dot"></span>
+            检索中，请稍候
+          </div>
+          <div class="task-event-list" data-task-events>
+          {% if active_search_task.events %}
+            {% for event in active_search_task.events[-6:] %}
+            <div class="task-event-item">{{ event.message }}</div>
+            {% endfor %}
+          {% endif %}
+          </div>
+        </div>
+      </article>
+      {% endif %}
+    {% else %}
+      <div class="chat-empty">
+        <strong>从一个研究主题开始检索</strong>
+        <span>快速检索走普通模式，优先补标题等核心字段；深度检索会显式调用仓库内的 academic-search-only skill，尽量写全候选文献信息。</span>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if current_project %}
+  <form class="task-panel page-task-panel search-task-form" method="post" action="{{ url_for('run_search_task', project_id=current_project.id) }}" data-search-form data-project-id="{{ current_project.id }}" data-status-url="{{ url_for('search_task_status', project_id=current_project.id) }}" data-stop-url="{{ url_for('reset_search_task', project_id=current_project.id) }}">
+    <input type="hidden" name="search_mode" value="quick" data-search-mode-input>
+    <textarea id="taskInput" name="user_request" placeholder="输入完整检索要求，例如：帮我找 2022 年以来多模态大模型在机器人双臂操作上的代表论文，先给 3 篇最相关的。（如果没有填写数量默认检索8篇）" {% if active_search_task %}readonly{% endif %}>{{ task_input_value }}</textarea>
+    <div class="task-actions">
+      <a class="pill primary link-pill" href="{{ url_for('search') }}">文献检索</a>
+      <a class="pill link-pill" href="{{ url_for('reading') }}">论文研读</a>
+      <a class="pill link-pill" href="{{ url_for('writing') }}">综述写作</a>
+    </div>
+    <div class="search-send-group">
+      {% if active_search_task %}
+      <button class="send-btn stop-send-btn" type="button" data-stop-search-task aria-label="停止本次检索" title="停止本次检索">
+        <span class="stop-icon"></span>
+      </button>
+      {% else %}
+      <button class="send-btn send-btn-mode quick" type="submit" data-search-mode="quick" onclick="this.form.search_mode.value='quick'" aria-label="快速检索" title="快速检索" {% if active_search_task %}disabled{% endif %}>
+        <span class="send-btn-label">快</span>
+        <span class="send-btn-icon">➜</span>
+      </button>
+      <button class="send-btn send-btn-mode deep" type="submit" data-search-mode="deep" onclick="this.form.search_mode.value='deep'" aria-label="深度检索" title="深度检索" {% if active_search_task %}disabled{% endif %}>
+        <span class="send-btn-label">深</span>
+        <span class="send-btn-icon">➤</span>
+      </button>
+      {% endif %}
+    </div>
+  </form>
+  {% else %}
+  <section class="task-panel page-task-panel">
+    <textarea id="taskInput" placeholder="请先创建项目，再发送文献检索任务" disabled></textarea>
+    <div class="task-actions">
+      <a class="pill primary link-pill" href="{{ url_for('index') }}">创建项目</a>
+    </div>
+  </section>
+  {% endif %}
+</section>
+
+<section class="search-layout">
+  <div class="result-panel panel result-panel-wide">
+    <div class="panel-head">
+      <h2>候选文献</h2>
+      <div class="page-head-actions">
+        <span class="badge">{{ results|length }} candidates</span>
+        <form class="inline-search-form" method="get" action="{{ url_for('search') }}">
+          <input class="inline-search-input" name="q" value="{{ query }}" placeholder="筛选候选池">
+        </form>
+      </div>
+    </div>
+    <div class="result-list">
+      {% for item in results %}
+      <article class="result-card">
+        <div class="result-title-row">
+          <div class="result-title">{{ item.title }}</div>
+          {% set source_modes = item.source_modes or [item.source_mode] %}
+          {% if "quick" in source_modes %}
+          <span class="source-mode-badge quick" title="来自快速检索">快</span>
+          {% endif %}
+          {% if "deep" in source_modes %}
+          <span class="source-mode-badge deep" title="来自深度检索">深</span>
+          {% endif %}
+        </div>
+        <div class="result-meta">
+          <span>{{ item.venue or "未知期刊/会议" }} · {{ item.year or "未知年份" }}</span>
+          {% if item.authors %}
+          <span>{{ item.authors[:2] | join(" / ") }}</span>
+          {% endif %}
+        </div>
+        <p class="result-abstract">{{ item.abstract_zh or "暂无中文摘要。" }}</p>
+        {% if item.keywords %}
+        <div class="keyword-row">
+          {% for keyword in item.keywords[:4] %}
+          <span>{{ keyword }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div class="candidate-extra">
+          {% if item.paper_url %}
+          <a class="candidate-icon-link" href="{{ item.paper_url }}" target="_blank" rel="noreferrer" title="打开论文详情页">↗</a>
+          {% endif %}
+          {% if item.doi %}
+          <button class="candidate-icon-link copy-doi-btn" type="button" data-copy-text="{{ item.doi }}" title="复制 DOI">DOI</button>
+          {% endif %}
+          {% if item.pdf_url %}
+          <a class="candidate-icon-link pdf" href="{{ item.pdf_url }}" target="_blank" rel="noreferrer" title="打开开放 PDF">PDF</a>
+          {% endif %}
+        </div>
+        <div class="result-actions">
+          <span class="tag" data-import-status>{{ item.import_status }}</span>
+          {% if current_project %}
+            {% if item.candidate_id in imported_ids or item.import_status == "已导入" %}
+              <form method="post" action="{{ url_for('remove_paper', project_id=current_project.id) }}" data-remove-form>
+                <input type="hidden" name="candidate_id" value="{{ item.candidate_id }}">
+                <input type="hidden" name="query" value="{{ query }}">
+                <button class="ghost-btn small danger" type="submit">从知识库移除</button>
+              </form>
+            {% else %}
+              <form method="post" action="{{ url_for('import_paper', project_id=current_project.id) }}" data-import-form>
+                <input type="hidden" name="paper_id" value="{{ item.candidate_id }}">
+                <input type="hidden" name="query" value="{{ query }}">
+                <button class="ghost-btn small" type="submit">导入知识库</button>
+              </form>
+            {% endif %}
+          {% else %}
+            <a class="ghost-btn small" href="{{ url_for('index') }}">先创建项目</a>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+      {% if not results and demo_results %}
+        {% for item in demo_results %}
+        <article class="result-card demo-card">
+          <div class="result-title">{{ item.title }}</div>
+          <div class="result-meta">{{ item.authors }} · {{ item.year }} · {{ item.source }}</div>
+          <p>{{ item.abstract }}</p>
+          <div class="result-actions">
+            <span class="tag">样例</span>
+            <button class="ghost-btn small" disabled>等待真实检索</button>
+          </div>
+        </article>
+        {% endfor %}
+      {% endif %}
+      {% if not results and not demo_results %}
+      <div class="empty-state">候选池里还没有匹配文献，发送上方检索任务后会自动更新。</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

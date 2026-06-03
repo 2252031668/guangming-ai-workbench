@@ -1,0 +1,9 @@
+{
+  "api_key": "sk-your-api-key",
+  "base_url": "https://api.openai.com/",
+  "model": "gpt-5.4",
+  "model_provider": "project-openai",
+  "wire_api": "responses",
+  "reasoning_effort": "high",
+  "disable_response_storage": true
+}

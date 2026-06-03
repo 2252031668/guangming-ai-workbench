@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% set title = "光明科研工作台" %}
+{% block content %}
+<section class="hero">
+  <div class="hero-top">
+    <div>
+      <div class="welcome">欢迎！👋</div>
+      <h1>光明 AI 学术工作站</h1>
+      <p>围绕研究主题组织文献检索、论文研读与综述写作。</p>
+    </div>
+    <button class="ghost-btn">本地模式</button>
+  </div>
+</section>
+
+<section class="dashboard-grid dashboard-grid-wide">
+  <div class="panel project-create-panel">
+    <div class="panel-head">
+      <h2>创建研究项目</h2>
+      <span class="badge">P0</span>
+    </div>
+    <form class="stack-form project-create-form" method="post" action="{{ url_for('create_project') }}">
+      <label class="field field-inline">
+        <span class="field-label">项目名称</span>
+        <input name="name" placeholder="例如：多模态大模型综述" required>
+      </label>
+      <label class="field">
+        <span class="field-label">研究说明</span>
+        <textarea name="topic_detail" placeholder="描述当前研究主题、综述目标或你希望系统围绕什么内容开展工作" required></textarea>
+      </label>
+      <div class="form-actions">
+        <button class="primary-btn wide-btn" type="submit">创建项目并进入检索</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="panel project-overview-panel">
+    <div class="panel-head">
+      <h2>当前项目概览</h2>
+      <span class="badge">{{ current_project.id if current_project else "未创建" }}</span>
+    </div>
+    <div class="stats">
+      <div><strong>{{ project.stats.papers }}</strong><span>篇文献</span></div>
+      <div><strong>{{ project.stats.read }}</strong><span>已研读</span></div>
+      <div><strong>{{ project.stats.selected }}</strong><span>重点文献</span></div>
+      <div><strong>{{ project.stats.outline }}</strong><span>提纲版本</span></div>
+    </div>
+  </div>
+</section>
+{% endblock %}

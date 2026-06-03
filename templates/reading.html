@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% set title = "论文研读 - 光明科研工作台" %}
+{% block content %}
+<section class="page-head reading-page-head">
+  <div>
+    <h1>论文研读</h1>
+    <p>左侧组织论文信息和目录，中间阅读 PDF，右侧围绕当前论文连续对话。</p>
+  </div>
+  <div class="page-head-actions">
+    {% if current_project %}
+      <span class="badge">当前项目：{{ current_project.name }}</span>
+    {% endif %}
+    <a class="ghost-btn" href="{{ url_for('library') }}">返回知识库</a>
+  </div>
+</section>
+
+{% if paper and current_project %}
+<section class="reading-workbench" data-reading-workbench>
+  <aside class="reading-side-panel panel" data-reading-side-panel>
+    <div class="reading-side-rail">
+      <button class="reading-tab-btn active" type="button" data-reading-tab="outline" title="目录">目</button>
+      <button class="reading-tab-btn" type="button" data-reading-tab="info" title="论文信息">信</button>
+      <button class="reading-tab-btn" type="button" data-reading-tab="matrix" title="文献矩阵">阵</button>
+      <button class="reading-tab-btn collapse" type="button" data-reading-collapse title="折叠左栏">‹</button>
+    </div>
+
+    <div class="reading-side-content">
+      <section class="reading-tab-panel active" data-reading-tab-panel="outline">
+        <div class="panel-head compact-head">
+          <div>
+            <h2>PDF 目录</h2>
+            <p>目录来自 PDF 内置 outline，点击后跳转对应页面。</p>
+          </div>
+        </div>
+        {% if pdf_exists %}
+          <div class="pdf-outline-list" data-pdf-outline>
+            <div class="empty-state compact">正在读取 PDF 目录...</div>
+          </div>
+        {% else %}
+          <div class="empty-state compact">当前论文还没有本地 PDF，先在知识库下载或上传。</div>
+        {% endif %}
+      </section>
+
+      <section class="reading-tab-panel" data-reading-tab-panel="info">
+        <div class="panel-head compact-head">
+          <div>
+            <h2>论文信息</h2>
+            <p>当前研读对象的元数据与摘要。</p>
+          </div>
+        </div>
+        <div class="reading-tab-scroll">
+          <article class="reading-paper-info">
+            <h3>{{ paper.title }}</h3>
+            <div class="paper-meta">{{ paper.authors|join("、") }} · {{ paper.year or "未知年份" }} · {{ paper.venue or "未知来源" }}</div>
+            <div class="info-pill-row">
+              <span>{{ paper.pdf_status or "无来源" }}</span>
+              {% if paper.doi %}<span>DOI</span>{% endif %}
+              {% if paper.has_structured_reading %}<span>已生成矩阵</span>{% endif %}
+            </div>
+            <div class="note-box">
+              <strong>中文摘要</strong>
+              <p>{{ paper.abstract_zh or "暂无中文摘要。" }}</p>
+            </div>
+            <div class="note-box">
+              <strong>备注</strong>
+              <p>{{ paper.notes or "暂无备注。" }}</p>
+            </div>
+          </article>
+
+          <div class="paper-switch-list">
+            <strong>项目内文献</strong>
+            {% for item in papers %}
+              <a class="paper-switch-item {{ 'active' if item.paper_id == paper.paper_id else '' }}" href="{{ url_for('reading', paper_id=item.paper_id) }}">
+                <span>{{ item.title }}</span>
+                <em>{{ item.year or "未知" }}</em>
+              </a>
+            {% endfor %}
+          </div>
+        </div>
+      </section>
+
+      <section class="reading-tab-panel" data-reading-tab-panel="matrix">
+        <div class="panel-head compact-head">
+          <div>
+            <h2>文献矩阵</h2>
+            <p>字段来自知识库页配置，本页只读展示。</p>
+          </div>
+        </div>
+        <div class="reading-tab-scroll">
+          <div class="reading-matrix-list">
+            {% for field in matrix_fields %}
+              {% set value = reading_values.get(field.field_id, {}).get("value", "") %}
+              <article class="reading-matrix-item">
+                <span>{{ field.name }}</span>
+                <p>{{ value or "尚未生成" }}</p>
+              </article>
+            {% endfor %}
+          </div>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <div class="reading-resizer" data-reading-resizer="left" title="拖拽调整左侧区域宽度"></div>
+
+  <section class="pdf-workspace panel"
+    data-pdf-viewer
+    data-pdf-url="{{ url_for('open_pdf', project_id=current_project.id, paper_id=paper.paper_id) if pdf_exists else '' }}"
+    data-pdf-module-url="{{ asset_url('vendor/pdfjs/pdf.mjs') }}"
+    data-pdf-worker-url="{{ asset_url('vendor/pdfjs/pdf.worker.mjs') }}"
+    data-standard-font-url="{{ url_for('static', filename='vendor/pdfjs/standard_fonts/') }}">
+    <div class="pdf-toolbar">
+      <div>
+        <span class="eyebrow">PDF 阅读器</span>
+        <strong>{{ paper.title }}</strong>
+      </div>
+      {% if pdf_exists %}
+      <div class="pdf-toolbar-actions">
+        <button class="ghost-btn small" type="button" data-pdf-prev>上一页</button>
+        <span class="pdf-page-state"><b data-pdf-page>1</b> / <b data-pdf-pages>?</b></span>
+        <button class="ghost-btn small" type="button" data-pdf-next>下一页</button>
+        <button class="ghost-btn small" type="button" data-pdf-zoom-out>-</button>
+        <span class="pdf-scale-state" data-pdf-scale>100%</span>
+        <button class="ghost-btn small" type="button" data-pdf-zoom-in>+</button>
+        <a class="ghost-btn small" href="{{ url_for('open_pdf', project_id=current_project.id, paper_id=paper.paper_id) }}" target="_blank">新标签打开</a>
+      </div>
+      {% endif %}
+    </div>
+    {% if pdf_exists %}
+      <div class="pdf-canvas-wrap" data-pdf-canvas-wrap>
+        <div class="pdf-pages" data-pdf-pages-container></div>
+      </div>
+    {% else %}
+      <div class="pdf-empty">
+        <strong>还没有本地 PDF</strong>
+        <p>请先回到知识库页下载 PDF 或手动上传 PDF，然后再进入论文研读。</p>
+        <a class="ghost-btn" href="{{ url_for('library') }}">回到知识库</a>
+      </div>
+    {% endif %}
+  </section>
+
+  <div class="reading-resizer" data-reading-resizer="right" title="拖拽调整右侧区域宽度"></div>
+
+  <aside class="reading-chat-pane panel">
+    <div class="panel-head compact-head">
+      <div>
+        <h2>论文对话</h2>
+        <p>只围绕当前论文，保留多轮记忆。</p>
+      </div>
+    </div>
+
+    <div class="chat-window reading-chat-window" data-reading-chat-window>
+      {% if reading_chat_messages %}
+        {% for message in reading_chat_messages %}
+          {% if message.role == "divider" %}
+            <div class="chat-divider"><span>{{ message.content }}</span></div>
+          {% else %}
+            <article class="chat-message {{ 'user' if message.role == 'user' else 'assistant' }}">
+              <div class="chat-avatar">{{ "我" if message.role == "user" else "光" }}</div>
+              <div class="chat-bubble">
+                <div class="chat-meta">
+                  <span>{{ "我的问题" if message.role == "user" else "论文研读" }}</span>
+                  <time>{{ message.created_at }}</time>
+                </div>
+                {% if message.role == "user" %}
+                  {% if message.attachments %}
+                    <div class="chat-attachment-row">
+                      {% for attachment in message.attachments %}
+                        {% if attachment.type == "image" and attachment.url %}
+                          <a class="chat-image-thumb" href="{{ attachment.url }}" target="_blank" title="查看截图">
+                            <img src="{{ attachment.url }}" alt="用户附加截图">
+                          </a>
+                        {% endif %}
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                  <p>{{ message.content }}</p>
+                {% else %}
+                  <div class="markdown-body" data-markdown>{{ message.content }}</div>
+                {% endif %}
+              </div>
+            </article>
+          {% endif %}
+        {% endfor %}
+      {% else %}
+        <div class="chat-empty">
+          <strong>开始和这篇论文对话</strong>
+          <span>可以问“这篇论文的核心贡献是什么？”、“实验设置怎么理解？”或“它适合放在综述哪一节？”。</span>
+        </div>
+      {% endif %}
+
+      {% if active_reading_chat_task %}
+        <article class="chat-message assistant running">
+          <div class="chat-avatar">光</div>
+          <div class="chat-bubble">
+            <div class="chat-meta">
+              <span>论文研读</span>
+              <time>{{ active_reading_chat_task.started_at }}</time>
+            </div>
+            <p>正在围绕当前论文回答问题。</p>
+            <div class="chat-result-line loading-line">
+              <span class="loading-dot"></span>
+              问答中，请稍候
+            </div>
+            {% if active_reading_chat_task.events %}
+              <div class="task-event-list">
+                {% for event in active_reading_chat_task.events[-6:] %}
+                  <div class="task-event-item">{{ event.message }}</div>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+        </article>
+      {% endif %}
+    </div>
+
+    <form class="task-panel page-task-panel reading-chat-form"
+      method="post"
+      action="{{ url_for('run_reading_chat', project_id=current_project.id, paper_id=paper.paper_id) }}"
+      data-reading-chat-form
+      data-status-url="{{ url_for('reading_chat_status', project_id=current_project.id, paper_id=paper.paper_id) }}"
+      data-stop-url="{{ url_for('stop_reading_chat', project_id=current_project.id, paper_id=paper.paper_id) }}"
+      data-reset-url="{{ url_for('reset_reading_chat', project_id=current_project.id, paper_id=paper.paper_id) }}">
+      <div class="reading-attachment-tray" data-reading-attachment-tray></div>
+      <textarea name="user_question" placeholder="围绕当前论文提问，例如：请解释这篇论文的方法流程，并指出适合写进综述的贡献点。" {% if active_reading_chat_task %}readonly{% endif %}></textarea>
+      <div class="reading-chat-controls">
+        <button class="reset-chat-btn" type="button" data-start-reading-screenshot>截图</button>
+        <button class="reset-chat-btn" type="button" data-reset-reading-chat>重置</button>
+        <button class="send-btn {% if active_reading_chat_task %}stop-send-btn{% endif %}" type="{{ 'button' if active_reading_chat_task else 'submit' }}" {% if active_reading_chat_task %}data-stop-reading-chat title="停止本次问答" aria-label="停止本次问答"{% else %}title="发送论文问题" aria-label="发送论文问题"{% endif %}>
+          {% if active_reading_chat_task %}<span class="stop-icon"></span>{% else %}➤{% endif %}
+        </button>
+      </div>
+    </form>
+  </aside>
+</section>
+{% else %}
+<section class="panel">
+  <div class="empty-state">当前还没有可研读文献，先从文献检索页导入至少一篇论文。</div>
+</section>
+{% endif %}
+{% endblock %}

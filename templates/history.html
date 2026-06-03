@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% set title = "历史记录 - 光明科研工作台" %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>历史记录</h1>
+    <p>保留项目创建与文献导入等关键过程，后续可扩展为完整任务历史。</p>
+  </div>
+</section>
+
+<section class="panel history-panel">
+  {% if events %}
+    {% for event in events %}
+    <div class="history-row">
+      <strong>{{ event.name }}</strong>
+      <span>{{ event.detail }}</span>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty-state">当前还没有历史记录，先创建项目并导入文献。</div>
+  {% endif %}
+</section>
+{% endblock %}

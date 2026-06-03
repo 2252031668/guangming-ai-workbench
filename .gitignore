@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+instance/
+config/codex.local.json
+workspace/projects/

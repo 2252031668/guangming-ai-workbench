@@ -1,0 +1,4 @@
+interface:
+  display_name: "Academic Search Only"
+  short_description: "Standalone deep retrieval for JSON-ready papers"
+  default_prompt: "Use $academic-search-only to run standalone deep academic retrieval and produce structured JSON-ready paper results."

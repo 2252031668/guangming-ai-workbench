@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "光明科研工作台" }}</title>
+  <link rel="stylesheet" href="{{ asset_url('css/app.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">光</div>
+        <div>
+          <div class="brand-name">光明</div>
+          <div class="brand-sub">AI 学术工作台</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a class="nav-item {{ 'active' if active == 'home' else '' }}" href="{{ url_for('index') }}">新建任务</a>
+        <a class="nav-item {{ 'active' if active == 'search' else '' }}" href="{{ url_for('search') }}">文献检索</a>
+        <a class="nav-item {{ 'active' if active == 'library' else '' }}" href="{{ url_for('library') }}">知识库</a>
+        <a class="nav-item {{ 'active' if active == 'reading' else '' }}" href="{{ url_for('reading') }}">论文研读</a>
+        <a class="nav-item {{ 'active' if active == 'writing' else '' }}" href="{{ url_for('writing') }}">综述写作</a>
+        <a class="nav-item {{ 'active' if active == 'history' else '' }}" href="{{ url_for('history') }}">历史记录</a>
+      </nav>
+
+      <section class="project-list-panel">
+        <div class="project-list-title">项目列表</div>
+        <div class="project-list">
+          {% if projects %}
+            {% for item in projects %}
+            <div class="project-list-item {{ 'current' if current_project and current_project.id == item.id else '' }}">
+              <form method="post" action="{{ url_for('activate_project', project_id=item.id) }}" class="project-switch-form">
+                <input type="hidden" name="next_page" value="{{ active }}">
+                <button type="submit" class="project-switch-btn">
+                  <strong>{{ item.name }}</strong>
+                  <span data-project-paper-count="{{ item.id }}">{{ item.stats.papers }} 篇文献</span>
+                </button>
+              </form>
+              <div class="project-item-actions">
+                <form method="post" action="{{ url_for('activate_project', project_id=item.id) }}" class="project-icon-form">
+                  <input type="hidden" name="next_page" value="{{ active }}">
+                  <button type="submit" class="project-icon-btn" title="切换项目" aria-label="切换项目">↗</button>
+                </form>
+                <form method="post" action="{{ url_for('delete_project', project_id=item.id) }}" class="project-icon-form" onsubmit="return confirm('确认删除该项目吗？');">
+                  <input type="hidden" name="next_page" value="{{ active }}">
+                  <button type="submit" class="project-icon-btn danger" title="删除项目" aria-label="删除项目">×</button>
+                </form>
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="project-list-empty">还没有项目</div>
+          {% endif %}
+        </div>
+      </section>
+
+      <div class="sidebar-card">
+        <div class="sidebar-card-title">当前项目</div>
+        <div class="sidebar-card-main">{{ project.name }}</div>
+        <div class="sidebar-card-sub">{{ project.topic or project.subtitle }}</div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <script src="{{ asset_url('vendor/marked.umd.js') }}"></script>
+  <script src="{{ asset_url('vendor/purify.min.js') }}"></script>
+  <script src="{{ asset_url('js/app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% set title = "综述写作 - 光明科研工作台" %}
+{% set active_stage = writing_state.current_stage or "topic" %}
+{% block content %}
+<section class="page-head writing-page-head">
+  <div>
+    <h1>综述写作</h1>
+    <p>围绕同一个本地 CSV，按主题、大纲、内容核对和正文生成四个阶段推进。</p>
+  </div>
+  <div class="page-head-actions">
+    {% if current_project %}
+      <span class="badge">当前项目：{{ current_project.name }}</span>
+      <a class="ghost-btn" href="{{ url_for('download_writing_csv', project_id=current_project.id) }}">下载 CSV</a>
+      <a class="ghost-btn" href="{{ url_for('download_writing_markdown', project_id=current_project.id) }}">下载 Markdown</a>
+    {% endif %}
+  </div>
+</section>
+
+{% if current_project %}
+<section class="writing-stage-strip" data-writing-stage-strip data-stage-url="{{ url_for('update_writing_stage', project_id=current_project.id) }}">
+  <button class="ghost-btn small" type="button" data-writing-prev-stage>上一阶段</button>
+  <div class="writing-stage-track">
+    {% for stage in writing_stages %}
+      <button class="writing-stage-node {{ 'active' if stage == active_stage else '' }}" type="button" data-writing-stage="{{ stage }}">
+        <span>{{ loop.index }}</span>
+        <strong>{{ writing_stage_labels[stage] }}</strong>
+      </button>
+    {% endfor %}
+  </div>
+  <button class="ghost-btn small" type="button" data-writing-next-stage>下一阶段</button>
+</section>
+
+<section class="writing-workbench"
+  data-writing-workbench
+  data-project-id="{{ current_project.id }}"
+  data-current-stage="{{ active_stage }}"
+  data-topic-url="{{ url_for('update_writing_topic', project_id=current_project.id) }}"
+  data-search-url="{{ url_for('search') }}"
+  data-library-url="{{ url_for('library') }}"
+  data-matrix='{{ matrix_by_paper | tojson }}'
+  data-writing-mapping='{{ writing_mapping | tojson }}'
+  data-selected='{{ selected_paper_ids | list | tojson }}'>
+  <section class="writing-left-panel panel">
+    <div class="writing-stage-panel {{ 'active' if active_stage == 'topic' else '' }}" data-writing-stage-panel="topic">
+      <div class="writing-split-block">
+        <div class="panel-head compact-head">
+          <div>
+            <h2>论文选择</h2>
+            <p>默认推荐已完成文献矩阵的论文，勾选结果会同步到写作 CSV。</p>
+          </div>
+        </div>
+        <div class="writing-paper-select-list" data-writing-paper-list data-selection-url="{{ url_for('update_writing_selection', project_id=current_project.id) }}">
+          {% for paper in papers %}
+          <label class="writing-paper-row {{ 'recommended' if paper.has_structured_reading else '' }}" data-writing-paper-row data-paper-id="{{ paper.paper_id }}">
+            <input type="checkbox" value="{{ paper.paper_id }}" {% if paper.paper_id in selected_paper_ids %}checked{% endif %}>
+            <span>{{ paper.title }}</span>
+          </label>
+          {% endfor %}
+          {% if not papers %}
+            <div class="empty-state compact">知识库中还没有文献。</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="writing-split-block">
+        <div class="panel-head compact-head">
+          <div>
+            <h2>文献矩阵</h2>
+            <p>点击上方论文后查看该论文的结构化研读结果。</p>
+          </div>
+        </div>
+        <div class="writing-matrix-preview" data-writing-matrix-preview>
+          <div class="empty-state compact">请选择一篇论文查看文献矩阵。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="writing-stage-panel {{ 'active' if active_stage == 'outline' else '' }}" data-writing-stage-panel="outline">
+      <div class="panel-head compact-head">
+        <div>
+          <h2>可编辑大纲</h2>
+          <p>保存后的大纲会作为后续对话和正文生成的依据。</p>
+        </div>
+        <div class="toolbar-actions">
+          <button class="ghost-btn small" type="button" data-writing-outline-mode="preview">预览</button>
+          <button class="ghost-btn small" type="button" data-writing-outline-mode="edit">编辑</button>
+          <button class="ghost-btn small" type="button" data-save-writing-outline>保存大纲</button>
+        </div>
+      </div>
+      <textarea class="writing-outline-editor" data-writing-outline data-outline-url="{{ url_for('update_writing_outline', project_id=current_project.id) }}" hidden>{{ outline_text }}</textarea>
+      <div class="writing-outline-preview markdown-body" data-writing-outline-preview></div>
+    </div>
+
+    <div class="writing-stage-panel {{ 'active' if active_stage == 'mapping' else '' }}" data-writing-stage-panel="mapping">
+      <div class="panel-head compact-head">
+        <div>
+          <h2>章节卡片矩阵</h2>
+          <p>为每篇文献分配写作章节，并记录该文献在章节中的使用方式。</p>
+        </div>
+        <button class="ghost-btn small" type="button" data-save-writing-mappings data-mappings-url="{{ url_for('update_writing_mappings', project_id=current_project.id) }}">保存核对</button>
+      </div>
+      <div class="writing-section-map" data-writing-section-map>
+      </div>
+    </div>
+
+    <div class="writing-stage-panel {{ 'active' if active_stage == 'draft' else '' }}" data-writing-stage-panel="draft">
+      <div class="panel-head compact-head">
+        <div>
+          <h2>综述 Markdown</h2>
+          <p>AI 直接编辑本地 Markdown；你也可以手动修改后保存。</p>
+        </div>
+        <div class="toolbar-actions">
+          <button class="ghost-btn small" type="button" data-writing-draft-mode="edit">编辑</button>
+          <button class="ghost-btn small" type="button" data-writing-draft-mode="preview">预览</button>
+          <button class="ghost-btn small" type="button" data-save-writing-draft>保存正文</button>
+        </div>
+      </div>
+      <textarea class="writing-draft-editor" data-writing-draft data-draft-url="{{ url_for('update_writing_draft', project_id=current_project.id) }}">{{ survey_text }}</textarea>
+      <div class="writing-draft-preview markdown-body" data-writing-draft-preview hidden></div>
+    </div>
+  </section>
+
+  <div class="writing-resizer" data-writing-resizer title="拖拽调整写作区域宽度"></div>
+
+  <aside class="writing-chat-pane panel">
+    <div class="panel-head compact-head">
+      <div>
+        <h2>写作对话</h2>
+        <p>跨阶段保留记忆，围绕当前 CSV、大纲和正文持续讨论。</p>
+        {% if writing_state.topic %}
+        <p class="writing-topic-pill" data-writing-topic-display>已选主题：{{ writing_state.topic }}</p>
+        {% else %}
+        <p class="writing-topic-pill is-empty" data-writing-topic-display>尚未选择综述主题</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="chat-window writing-chat-window" data-writing-chat-window>
+      {% if writing_chat_messages %}
+        {% for message in writing_chat_messages %}
+          {% if message.role == "divider" %}
+            <div class="chat-divider"><span>{{ message.content }}</span></div>
+          {% else %}
+            <article class="chat-message {{ 'user' if message.role == 'user' else 'assistant' }}">
+              <div class="chat-avatar">{{ "我" if message.role == "user" else "光" }}</div>
+              <div class="chat-bubble">
+                <div class="chat-meta">
+                  <span>{{ "我的问题" if message.role == "user" else "综述写作" }}</span>
+                  <time>{{ message.created_at }}</time>
+                </div>
+                {% if message.role == "user" %}
+                  <p>{{ message.content }}</p>
+                {% else %}
+                  <div class="markdown-body" data-markdown>{{ message.content }}</div>
+                {% endif %}
+                {% if message.actions %}
+                  <div class="writing-action-panel" data-writing-actions='{{ message.actions | tojson }}'></div>
+                {% endif %}
+              </div>
+            </article>
+          {% endif %}
+        {% endfor %}
+      {% else %}
+        <div class="chat-empty">
+          <strong>开始综述写作</strong>
+          <span>可以先从“帮我拟定一个合适的文献综述主题”开始。</span>
+        </div>
+      {% endif %}
+
+      {% if active_writing_task %}
+        <article class="chat-message assistant running">
+          <div class="chat-avatar">光</div>
+          <div class="chat-bubble">
+            <div class="chat-meta">
+              <span>综述写作</span>
+              <time>{{ active_writing_task.started_at }}</time>
+            </div>
+            <p>正在处理当前阶段任务。</p>
+            <div class="chat-result-line loading-line"><span class="loading-dot"></span>写作中，请稍候</div>
+            <div class="task-event-list">
+              {% if active_writing_task.events %}
+                {% for event in active_writing_task.events[-8:] %}
+                <div class="task-event-item">{{ event.message }}</div>
+                {% endfor %}
+              {% endif %}
+            </div>
+          </div>
+        </article>
+      {% endif %}
+    </div>
+
+    <div class="writing-quick-row" data-writing-quick-row>
+    </div>
+
+    <form class="task-panel page-task-panel writing-chat-form"
+      method="post"
+      action="{{ url_for('run_writing_chat', project_id=current_project.id) }}"
+      data-writing-chat-form
+      data-status-url="{{ url_for('writing_chat_status', project_id=current_project.id) }}"
+      data-stop-url="{{ url_for('stop_writing_chat', project_id=current_project.id) }}"
+      data-reset-url="{{ url_for('reset_writing_chat', project_id=current_project.id) }}">
+      <textarea name="user_question" placeholder="围绕当前阶段提问或下达写作任务。"{% if active_writing_task %} readonly{% endif %}></textarea>
+      <div class="writing-chat-controls">
+        <button class="reset-chat-btn" type="button" data-reset-writing-chat>重置</button>
+        <button class="send-btn {% if active_writing_task %}stop-send-btn{% endif %}" type="{{ 'button' if active_writing_task else 'submit' }}" {% if active_writing_task %}data-stop-writing-chat title="停止本次任务" aria-label="停止本次任务"{% else %}title="发送写作任务" aria-label="发送写作任务"{% endif %}>
+          {% if active_writing_task %}<span class="stop-icon"></span>{% else %}➤{% endif %}
+        </button>
+      </div>
+    </form>
+  </aside>
+</section>
+{% else %}
+<section class="panel">
+  <div class="empty-state">请先创建或选择一个项目。</div>
+</section>
+{% endif %}
+{% endblock %}

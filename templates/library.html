@@ -300,7 +300,7 @@
   </div>
   {% endif %}
 
-  <form class="task-panel page-task-panel library-chat-form" method="post" action="{{ url_for('run_library_chat', project_id=current_project.id) }}" data-library-chat-form data-project-id="{{ current_project.id }}" data-status-url="{{ url_for('library_chat_status', project_id=current_project.id) }}" data-reset-url="{{ url_for('reset_library_chat', project_id=current_project.id) }}" data-stop-url="{{ url_for('stop_library_chat', project_id=current_project.id) }}">
+  <form class="task-panel page-task-panel library-chat-form" method="post" action="{{ url_for('run_library_chat', project_id=current_project.id) }}" data-library-chat-form data-project-id="{{ current_project.id }}" data-status-url="{{ url_for('library_chat_status', project_id=current_project.id) }}" data-reset-url="{{ url_for('reset_library_chat', project_id=current_project.id) }}" data-stop-url="{{ url_for('stop_library_chat', project_id=current_project.id) }}" data-compact-url="{{ url_for('compact_library_chat', project_id=current_project.id) }}">
     <div data-library-selected-inputs></div>
     <textarea name="user_question" placeholder="针对上方勾选文献提问，例如：请比较这些论文的方法差异，并指出哪篇最适合作为综述重点。" {% if active_library_chat_task %}readonly{% endif %}></textarea>
     <div class="task-actions">
@@ -308,6 +308,7 @@
       <span class="pill" data-chat-selection-hint>请先勾选文献</span>
     </div>
     <div class="library-chat-controls">
+      <button class="reset-chat-btn" type="button" data-compact-library-chat aria-label="压缩记忆" title="压缩当前 Codex 对话线程记忆">压缩记忆</button>
       <button class="reset-chat-btn" type="button" data-reset-library-chat aria-label="重置对话" title="重置对话，清空本轮线程记忆">重置</button>
       {% if active_library_chat_task %}
       <button class="send-btn stop-send-btn" type="button" data-stop-library-chat aria-label="停止本次问答" title="停止本次问答">

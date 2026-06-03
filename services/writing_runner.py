@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, TextInput
-from openai_codex._run import _collect_turn_result
 from openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
     CommandExecutionThreadItem,
@@ -16,7 +15,12 @@ from openai_codex.generated.v2_all import (
     ReasoningTextDeltaNotification,
 )
 
-from services.codex_runner import build_config_overrides, read_json
+from services.codex_runner import (
+    build_config_overrides,
+    collect_codex_turn_with_diagnostics,
+    friendly_codex_error,
+    load_runtime_config,
+)
 
 
 STAGE_GUIDES = {
@@ -169,12 +173,7 @@ def collect_writing_turn_result_with_progress(stream, *, turn_id: str, progress:
             if isinstance(item, CommandExecutionThreadItem):
                 emit(f"已执行本地辅助命令，状态：{item.status.value}。")
 
-    def observed_stream():
-        for event in stream:
-            observe_event(event)
-            yield event
-
-    return _collect_turn_result(observed_stream(), turn_id=turn_id)
+    return collect_codex_turn_with_diagnostics(stream, turn_id=turn_id, on_event=observe_event)
 
 
 def run_writing_turn(
@@ -193,7 +192,7 @@ def run_writing_turn(
     draft_changed: bool,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    config = read_json(repo_dir / "config" / "codex.local.json")
+    config = load_runtime_config(repo_dir)
     provider = config.get("model_provider") or "custom"
     codex_home = repo_dir / "instance" / "codex-home-web"
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -258,9 +257,16 @@ def run_writing_turn(
         finally:
             stream.close()
 
-    display_text, actions = extract_actions(result.final_response or "")
+    if not result.final_response:
+        detail = result.diagnostics.get("error") or "Codex turn 已完成，但没有收到任何 assistant 文本。"
+        raise RuntimeError(friendly_codex_error(RuntimeError(detail)))
+    display_text, actions = extract_actions(result.final_response)
     return {
         "thread_id": thread.id,
         "assistant_message": display_text,
         "actions": actions,
+        "turn_id": result.turn_id,
+        "turn_status": result.status,
+        "usage": result.to_api_payload().get("usage"),
+        "diagnostics": result.diagnostics,
     }

@@ -4,4 +4,6 @@ __pycache__/
 .DS_Store
 instance/
 config/codex.local.json
+config/model_profiles.json
 workspace/projects/
+vendor/

@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% set title = "模型设置 - 光明 AI 学术工作台" %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>模型设置</h1>
+    <p>管理全局模型配置，支持随时切换当前模型，并在保存前进行真实连通测试。</p>
+  </div>
+  <div class="page-head-actions">
+    <span class="badge">当前使用：{{ active_profile.name }}</span>
+  </div>
+</section>
+
+<section
+  class="settings-layout"
+  data-model-settings
+  data-profiles-url="{{ url_for('api_model_profiles') }}"
+  data-test-url="{{ url_for('api_test_model_profile') }}"
+  data-render-chat-code-url="{{ url_for('api_render_chat_code') }}"
+  data-bridge-status-url="{{ url_for('api_bridge_status') }}">
+  <section class="panel settings-list-panel">
+    <div class="panel-head">
+      <h2>模型列表</h2>
+      <button class="primary-btn small" type="button" data-model-profile-new>新增模型</button>
+    </div>
+    <div class="model-profile-list" data-model-profile-list>
+      {% for profile in profiles %}
+      <article
+        class="model-profile-card {% if profile.id == active_profile.id %}active{% endif %}"
+        data-model-profile-card
+        data-profile='{{ profile | tojson }}'>
+        <div class="model-profile-head">
+          <div>
+            <strong>{{ profile.name }}</strong>
+            <span>{{ profile_modes[profile.mode] }}</span>
+          </div>
+          {% if profile.id == active_profile.id %}
+            <span class="badge">使用中</span>
+          {% endif %}
+        </div>
+        <div class="model-profile-meta">
+          <span>Base URL：{{ profile.base_url }}</span>
+          <span>模型名：{{ profile.model }}</span>
+        </div>
+        <div class="model-profile-actions">
+          {% if profile.id != active_profile.id %}
+          <button class="ghost-btn small" type="button" data-model-profile-activate="{{ profile.id }}">启用</button>
+          {% endif %}
+          <button class="ghost-btn small" type="button" data-model-profile-edit="{{ profile.id }}">编辑</button>
+          <button class="ghost-btn small danger" type="button" data-model-profile-delete="{{ profile.id }}">删除</button>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel settings-editor-panel">
+    <div class="panel-head">
+      <h2 data-model-editor-title>{{ "编辑模型" if editing_profile.id else "新增模型" }}</h2>
+      <span class="badge" data-model-bridge-badge>{{ profile_modes[editing_profile.mode] }}</span>
+    </div>
+    <form class="stack-form model-settings-form" data-model-profile-form data-editing-id="{{ editing_profile.id }}">
+      <div class="form-row">
+        <label class="field">
+          <span>显示名称</span>
+          <input name="name" value="{{ editing_profile.name }}" placeholder="例如：DeepSeek V4 Pro">
+        </label>
+        <label class="field">
+          <span>备注</span>
+          <input name="note" value="{{ editing_profile.note }}" placeholder="例如：实验专用号">
+        </label>
+      </div>
+
+      <label class="field">
+        <span>模式</span>
+        <select name="mode" data-model-mode-select>
+          <option value="responses_native" {% if editing_profile.mode == 'responses_native' %}selected{% endif %}>原生 Responses</option>
+          <option value="chat_via_bridge" {% if editing_profile.mode == 'chat_via_bridge' %}selected{% endif %}>Chat Completions + 本地路由</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>API Key</span>
+        <input name="api_key" type="password" value="{{ editing_profile.api_key }}" placeholder="填写 API Key">
+      </label>
+
+      <label class="field">
+        <span>API 请求地址</span>
+        <input name="base_url" value="{{ editing_profile.base_url }}" placeholder="https://api.deepseek.com">
+      </label>
+
+      <label class="field">
+        <span>模型名</span>
+        <input name="model" value="{{ editing_profile.model }}" placeholder="例如：deepseek-v4-pro">
+      </label>
+
+      <details class="settings-advanced">
+        <summary>高级设置</summary>
+        <div class="form-row">
+          <label class="field">
+            <span>上下文窗口 context_window</span>
+            <input name="context_window" type="number" min="1" step="1" value="{{ editing_profile.context_window if editing_profile.context_window else '' }}" placeholder="留空表示不覆盖">
+          </label>
+          <label class="field">
+            <span>最大输出 tokens</span>
+            <input name="max_output_tokens" type="number" min="1" step="1" value="{{ editing_profile.max_output_tokens if editing_profile.max_output_tokens else '' }}" placeholder="留空表示不覆盖">
+          </label>
+        </div>
+        <p class="settings-code-hint">请填写上游模型真实支持的数值。填得过大不会提升模型能力，反而可能导致上游返回上下文超限。</p>
+      </details>
+
+      <section class="settings-mode-panel {% if editing_profile.mode != 'responses_native' %}hidden{% endif %}" data-mode-panel="responses_native">
+        <label class="field">
+          <span>Reasoning Effort</span>
+          <select name="reasoning_effort_default">
+            {% for effort in ["low", "medium", "high"] %}
+            <option value="{{ effort }}" {% if editing_profile.reasoning_effort_default == effort %}selected{% endif %}>{{ effort }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </section>
+
+      <section class="settings-mode-panel {% if editing_profile.mode != 'chat_via_bridge' %}hidden{% endif %}" data-mode-panel="chat_via_bridge">
+        <div class="settings-hint-card">
+          <strong>使用本地路由</strong>
+          <p>表单里的地址是上游 Chat Completions 地址；工作台会通过 Moon Bridge 把 Codex 需要的 Responses 请求转过去。</p>
+        </div>
+
+        <div class="form-row">
+          <label class="toggle-row compact">
+            <span>开启思维模式</span>
+            <input type="checkbox" name="chat_request_config.thinking_enabled" {% if editing_profile.chat_request_config.thinking_enabled %}checked{% endif %}>
+          </label>
+          <label class="field">
+            <span>思考等级</span>
+            <select name="chat_request_config.reasoning_level">
+              {% for effort in ["none", "low", "medium", "high"] %}
+              <option value="{{ effort }}" {% if editing_profile.chat_request_config.reasoning_level == effort %}selected{% endif %}>{{ "无" if effort == "none" else effort }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+
+        <section class="chat-code-panel">
+          <div class="chat-code-head">
+            <div>
+              <strong>测试代码（路由前）</strong>
+              <span data-chat-code-state>表单生成</span>
+            </div>
+            <div class="chat-code-actions">
+              <button class="ghost-btn small" type="button" data-regenerate-chat-code>从表单重新生成</button>
+              <button class="ghost-btn small" type="button" data-run-chat-code-test>测试代码（路由前）</button>
+            </div>
+          </div>
+          <textarea
+            class="chat-code-editor"
+            name="chat_code"
+            spellcheck="false"
+            data-chat-code-editor>{{ editing_profile_chat_code }}</textarea>
+          <p class="settings-code-hint" data-chat-code-hint>代码未自定义时会跟随表单自动刷新；你可以修改 reasoning_effort 或 extra_body 来适配不同供应商。</p>
+        </section>
+
+        <div class="settings-inline-status" data-bridge-status-box>
+          {{ bridge_info.message }}
+        </div>
+      </section>
+
+      <div class="settings-test-result" data-model-test-result hidden></div>
+
+      <div class="settings-form-actions">
+        <button class="ghost-btn" type="button" data-bridge-responses-test>测试 Moon Bridge Responses</button>
+        <button class="ghost-btn" type="button" data-model-profile-test>测试完整 Codex 链路</button>
+        <button class="primary-btn" type="submit">保存</button>
+      </div>
+    </form>
+  </section>
+</section>
+<script src="{{ asset_url('js/model-settings.js') }}"></script>
+{% endblock %}

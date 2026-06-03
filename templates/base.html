@@ -62,6 +62,14 @@
         <div class="sidebar-card-main">{{ project.name }}</div>
         <div class="sidebar-card-sub">{{ project.topic or project.subtitle }}</div>
       </div>
+
+      <a class="settings-entry {{ 'active' if active == 'settings' else '' }}" href="{{ url_for('settings_models') }}" title="模型设置" aria-label="模型设置">
+        <span class="settings-entry-icon">⚙</span>
+        <span>
+          <strong>模型设置</strong>
+          <small>{{ active_model_profile.name }}</small>
+        </span>
+      </a>
     </aside>
 
     <main class="workspace">

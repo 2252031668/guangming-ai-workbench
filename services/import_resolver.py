@@ -8,7 +8,7 @@ from typing import Any, Callable
 from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, TextInput
 from openai_codex.generated.v2_all import ReasoningSummary
 
-from services.codex_runner import build_config_overrides, read_json
+from services.codex_runner import build_config_overrides, friendly_codex_error, load_runtime_config, run_thread_turn_with_diagnostics
 
 
 def parse_json_object(text: str) -> dict[str, Any]:
@@ -84,7 +84,7 @@ def run_import_resolution(
     pdf_path: str = "",
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    config = read_json(repo_dir / "config" / "codex.local.json")
+    config = load_runtime_config(repo_dir)
     provider = config.get("model_provider") or "custom"
     codex_home = repo_dir / "instance" / "codex-home-web"
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -110,12 +110,14 @@ def run_import_resolution(
             model_provider=provider,
             ephemeral=True,
         )
-        result = thread.run(
+        result = run_thread_turn_with_diagnostics(
+            thread,
             [TextInput(build_import_prompt(draft, pdf_path=pdf_path))],
-            approval_mode=ApprovalMode.deny_all,
-            sandbox=Sandbox.full_access,
             summary=ReasoningSummary(root="concise"),
         )
 
+    if not result.final_response:
+        detail = result.diagnostics.get("error") or "Codex turn 已完成，但没有收到任何 assistant 文本。"
+        raise RuntimeError(friendly_codex_error(RuntimeError(detail)))
     emit("导入补全智能体已返回结果，正在校验 JSON。")
-    return parse_json_object(result.final_response or "")
+    return parse_json_object(result.final_response)

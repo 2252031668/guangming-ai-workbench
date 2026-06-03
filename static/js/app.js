@@ -528,7 +528,9 @@ if (libraryChatForm) {
   const statusUrl = libraryChatForm.dataset.statusUrl;
   const resetUrl = libraryChatForm.dataset.resetUrl;
   const stopUrl = libraryChatForm.dataset.stopUrl;
+  const compactUrl = libraryChatForm.dataset.compactUrl;
   const projectId = libraryChatForm.dataset.projectId || "default";
+  const compactButton = document.querySelector("[data-compact-library-chat]");
   const selectionStoreKey = `guangming-library-selection:${projectId}`;
   const chatWindow = document.querySelector("[data-library-chat-window]");
   const libraryQaPanel = document.querySelector(".library-qa-panel");
@@ -788,6 +790,33 @@ if (libraryChatForm) {
       renderLibraryChat(payload.messages || []);
     } catch (error) {
       window.alert(error.message || "重置对话失败。");
+    }
+  });
+
+  compactButton?.addEventListener("click", async () => {
+    if (!compactUrl) return;
+    if (!window.confirm("确定要压缩当前知识库问答记忆吗？这会保留当前线程，但让 Codex 尝试整理上下文。")) return;
+    const previousText = compactButton.textContent;
+    compactButton.disabled = true;
+    compactButton.textContent = "压缩中...";
+    try {
+      const response = await fetch(compactUrl, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "fetch",
+        },
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "compact failed");
+      stopLibraryChatPolling();
+      setLibraryChatBusy(false);
+      renderLibraryChat(payload.messages || []);
+    } catch (error) {
+      window.alert(error.message || "压缩记忆失败。");
+    } finally {
+      compactButton.disabled = false;
+      compactButton.textContent = previousText || "压缩记忆";
     }
   });
 }
@@ -1532,12 +1561,6 @@ if (pdfViewer && pdfViewer.dataset.pdfUrl) {
     }
   })();
 
-  pdfViewer.querySelector("[data-pdf-prev]")?.addEventListener("click", () => {
-    if (currentPage > 1) scrollToPage(currentPage - 1);
-  });
-  pdfViewer.querySelector("[data-pdf-next]")?.addEventListener("click", () => {
-    if (pdfDocument && currentPage < pdfDocument.numPages) scrollToPage(currentPage + 1);
-  });
   pdfViewer.querySelector("[data-pdf-zoom-in]")?.addEventListener("click", () => {
     scale = Math.min(2.2, scale + 0.12);
     updatePdfState();
@@ -1648,6 +1671,7 @@ if (readingChatForm) {
   const textarea = readingChatForm.querySelector("textarea");
   const submitButton = readingChatForm.querySelector(".reading-chat-controls .send-btn");
   const screenshotButton = readingChatForm.querySelector("[data-start-reading-screenshot]");
+  const compactButton = readingChatForm.querySelector("[data-compact-reading-chat]");
   const attachmentTray = readingChatForm.querySelector("[data-reading-attachment-tray]");
   const chatWindow = document.querySelector("[data-reading-chat-window]");
   let readingChatPollTimer = null;
@@ -1755,6 +1779,7 @@ if (readingChatForm) {
     }
     if (textarea) textarea.readOnly = busy;
     if (screenshotButton) screenshotButton.disabled = busy;
+    if (compactButton) compactButton.disabled = busy;
   };
 
   const renderReadingAttachments = () => {
@@ -1903,6 +1928,29 @@ if (readingChatForm) {
     }
   });
 
+  compactButton?.addEventListener("click", async () => {
+    if (!window.confirm("确定要压缩当前论文研读对话记忆吗？压缩完成后会继续沿用当前线程。")) return;
+    const originalText = compactButton.textContent;
+    compactButton.disabled = true;
+    compactButton.textContent = "压缩中...";
+    try {
+      const response = await fetch(readingChatForm.dataset.compactUrl, {
+        method: "POST",
+        headers: { Accept: "application/json", "X-Requested-With": "fetch" },
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "compact failed");
+      stopReadingChatPolling();
+      setReadingChatBusy(false);
+      renderReadingChat(payload.messages || []);
+    } catch (error) {
+      window.alert(error.message || "压缩论文研读对话记忆失败。");
+    } finally {
+      compactButton.disabled = false;
+      compactButton.textContent = originalText || "压缩记忆";
+    }
+  });
+
   readingChatForm.querySelector("[data-reset-reading-chat]")?.addEventListener("click", async () => {
     if (!window.confirm("确定要重置当前论文的研读对话吗？这会开启新的对话线程，但保留历史分割线。")) return;
     try {
@@ -1946,6 +1994,7 @@ if (writingWorkbench) {
   const quickRow = writingWorkbench.querySelector("[data-writing-quick-row]");
   const chatTextarea = chatForm?.querySelector("textarea");
   const chatSubmitButton = chatForm?.querySelector(".writing-chat-controls .send-btn");
+  const compactButton = chatForm?.querySelector("[data-compact-writing-chat]");
   const matrixByPaper = JSON.parse(writingWorkbench.dataset.matrix || "{}");
   let writingMapping = JSON.parse(writingWorkbench.dataset.writingMapping || "{\"sections\":[],\"papers\":[],\"mappings\":[]}");
   const writingProjectId = writingWorkbench.dataset.projectId || "";
@@ -2356,6 +2405,7 @@ if (writingWorkbench) {
       }
     }
     if (chatTextarea) chatTextarea.readOnly = busy;
+    if (compactButton) compactButton.disabled = busy;
   };
 
   const pollWritingStatus = async () => {
@@ -2466,6 +2516,30 @@ if (writingWorkbench) {
       renderWritingChat(payload.messages || []);
     } catch (error) {
       window.alert(error.message || "保存综述主题失败。");
+    }
+  });
+
+  compactButton?.addEventListener("click", async () => {
+    if (!window.confirm("确定要压缩当前综述写作对话记忆吗？压缩完成后会继续沿用当前线程。")) return;
+    const originalText = compactButton.textContent;
+    compactButton.disabled = true;
+    compactButton.textContent = "压缩中...";
+    try {
+      const response = await fetch(chatForm.dataset.compactUrl, {
+        method: "POST",
+        headers: { Accept: "application/json", "X-Requested-With": "fetch" },
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "compact failed");
+      if (writingPollTimer) window.clearInterval(writingPollTimer);
+      writingPollTimer = null;
+      setWritingBusy(false);
+      renderWritingChat(payload.messages || []);
+    } catch (error) {
+      window.alert(error.message || "压缩综述写作对话记忆失败。");
+    } finally {
+      compactButton.disabled = false;
+      compactButton.textContent = originalText || "压缩记忆";
     }
   });
 
@@ -3039,4 +3113,254 @@ function tagStyle(tag, customTags = []) {
 
 function hashTag(tag) {
   return Array.from(String(tag)).reduce((sum, char, index) => sum + char.charCodeAt(0) * (index + 1), 0);
+}
+
+const legacyModelSettingsRoot = null;
+if (legacyModelSettingsRoot) {
+  const profilesUrl = modelSettingsRoot.dataset.profilesUrl;
+  const testUrl = modelSettingsRoot.dataset.testUrl;
+  const bridgeStatusUrl = modelSettingsRoot.dataset.bridgeStatusUrl;
+  const profileList = modelSettingsRoot.querySelector("[data-model-profile-list]");
+  const form = modelSettingsRoot.querySelector("[data-model-profile-form]");
+  const titleNode = modelSettingsRoot.querySelector("[data-model-editor-title]");
+  const bridgeBadge = modelSettingsRoot.querySelector("[data-model-bridge-badge]");
+  const resultBox = modelSettingsRoot.querySelector("[data-model-test-result]");
+  const bridgeStatusBox = modelSettingsRoot.querySelector("[data-bridge-status-box]");
+  const modeSelect = form?.querySelector("[data-model-mode-select]");
+  let profilesCache = [];
+  let activeProfileId = "";
+
+  const profileModeLabel = (mode) => (mode === "chat_via_bridge" ? "使用本地路由" : "原生 Responses");
+
+  const blankProfile = () => ({
+    id: "",
+    name: "",
+    note: "",
+    api_key: "",
+    base_url: "https://api.openai.com",
+    model: "",
+    mode: "responses_native",
+    reasoning_effort_default: "high",
+    bridge_capabilities: {
+      thinking_toggle_supported: true,
+      thinking_default_enabled: true,
+      reasoning_level_mapping_supported: false,
+      reasoning_level_mapping_enabled: false,
+      upstream_protocol: "openai_chat",
+    },
+  });
+
+  const readFormPayload = () => ({
+    name: form.querySelector("[name='name']")?.value.trim() || "",
+    note: form.querySelector("[name='note']")?.value.trim() || "",
+    api_key: form.querySelector("[name='api_key']")?.value.trim() || "",
+    base_url: form.querySelector("[name='base_url']")?.value.trim() || "",
+    model: form.querySelector("[name='model']")?.value.trim() || "",
+    mode: modeSelect?.value || "responses_native",
+    reasoning_effort_default: form.querySelector("[name='reasoning_effort_default']")?.value || "high",
+    bridge_capabilities: {
+      thinking_toggle_supported: !!form.querySelector("[name='bridge_capabilities.thinking_toggle_supported']")?.checked,
+      thinking_default_enabled: !!form.querySelector("[name='bridge_capabilities.thinking_default_enabled']")?.checked,
+      reasoning_level_mapping_supported: !!form.querySelector("[name='bridge_capabilities.reasoning_level_mapping_supported']")?.checked,
+      reasoning_level_mapping_enabled: !!form.querySelector("[name='bridge_capabilities.reasoning_level_mapping_enabled']")?.checked,
+      upstream_protocol: "openai_chat",
+    },
+  });
+
+  const setResult = (kind, message) => {
+    if (!resultBox) return;
+    resultBox.hidden = false;
+    resultBox.className = `settings-test-result ${kind}`;
+    resultBox.textContent = message;
+  };
+
+  const clearResult = () => {
+    if (!resultBox) return;
+    resultBox.hidden = true;
+    resultBox.className = "settings-test-result";
+    resultBox.textContent = "";
+  };
+
+  const renderModePanels = () => {
+    const mode = modeSelect?.value || "responses_native";
+    form.querySelectorAll("[data-mode-panel]").forEach((panel) => {
+      panel.classList.toggle("hidden", panel.dataset.modePanel !== mode);
+    });
+    if (bridgeBadge) bridgeBadge.textContent = profileModeLabel(mode);
+    if (bridgeStatusBox && mode !== "chat_via_bridge") {
+      bridgeStatusBox.textContent = "当前模型使用原生 Responses。";
+    }
+  };
+
+  const fillForm = (profile) => {
+    const target = {
+      ...blankProfile(),
+      ...profile,
+      bridge_capabilities: {
+        ...blankProfile().bridge_capabilities,
+        ...(profile.bridge_capabilities || {}),
+      },
+    };
+    form.dataset.editingId = target.id || "";
+    if (titleNode) titleNode.textContent = target.id ? "编辑模型" : "新增模型";
+    form.querySelector("[name='name']").value = target.name || "";
+    form.querySelector("[name='note']").value = target.note || "";
+    form.querySelector("[name='api_key']").value = target.api_key || "";
+    form.querySelector("[name='base_url']").value = target.base_url || "";
+    form.querySelector("[name='model']").value = target.model || "";
+    modeSelect.value = target.mode || "responses_native";
+    form.querySelector("[name='reasoning_effort_default']").value = target.reasoning_effort_default || "high";
+    form.querySelector("[name='bridge_capabilities.thinking_toggle_supported']").checked = !!target.bridge_capabilities.thinking_toggle_supported;
+    form.querySelector("[name='bridge_capabilities.thinking_default_enabled']").checked = !!target.bridge_capabilities.thinking_default_enabled;
+    form.querySelector("[name='bridge_capabilities.reasoning_level_mapping_supported']").checked = !!target.bridge_capabilities.reasoning_level_mapping_supported;
+    form.querySelector("[name='bridge_capabilities.reasoning_level_mapping_enabled']").checked = !!target.bridge_capabilities.reasoning_level_mapping_enabled;
+    clearResult();
+    renderModePanels();
+  };
+
+  const renderProfiles = () => {
+    if (!profileList) return;
+    profileList.innerHTML = profilesCache.map((profile) => `
+      <article class="model-profile-card ${profile.id === activeProfileId ? "active" : ""}" data-model-profile-card data-profile='${escapeAttribute(JSON.stringify(profile))}'>
+        <div class="model-profile-head">
+          <div>
+            <strong>${escapeHtml(profile.name || "未命名模型")}</strong>
+            <span>${escapeHtml(profileModeLabel(profile.mode))}</span>
+          </div>
+          ${profile.id === activeProfileId ? '<span class="badge">使用中</span>' : ""}
+        </div>
+        <div class="model-profile-meta">
+          <span>${escapeHtml(profile.base_url || "")}</span>
+          <span>${escapeHtml(profile.model || "")}</span>
+        </div>
+        <div class="model-profile-actions">
+          ${profile.id === activeProfileId ? "" : `<button class="ghost-btn small" type="button" data-model-profile-activate="${escapeAttribute(profile.id)}">启用</button>`}
+          <button class="ghost-btn small" type="button" data-model-profile-edit="${escapeAttribute(profile.id)}">编辑</button>
+          <button class="ghost-btn small danger" type="button" data-model-profile-delete="${escapeAttribute(profile.id)}">删除</button>
+        </div>
+      </article>
+    `).join("");
+  };
+
+  const loadProfiles = async () => {
+    const response = await fetch(profilesUrl, { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "加载模型配置失败。");
+    profilesCache = payload.profiles || [];
+    activeProfileId = payload.active_profile_id || "";
+    renderProfiles();
+    const current = profilesCache.find((item) => item.id === form.dataset.editingId)
+      || profilesCache.find((item) => item.id === activeProfileId)
+      || blankProfile();
+    fillForm(current);
+  };
+
+  const refreshBridgeStatus = async () => {
+    const payload = readFormPayload();
+    if (!bridgeStatusBox) return;
+    if (payload.mode !== "chat_via_bridge") {
+      bridgeStatusBox.textContent = "当前模型使用原生 Responses。";
+      return;
+    }
+    try {
+      const response = await fetch(`${bridgeStatusUrl}?mode=chat_via_bridge`, { cache: "no-store" });
+      const data = await response.json();
+      bridgeStatusBox.textContent = data.status?.message || "本地路由状态未知。";
+    } catch (_error) {
+      bridgeStatusBox.textContent = "无法获取本地路由状态。";
+    }
+  };
+
+  modelSettingsRoot.addEventListener("click", async (event) => {
+    const editButton = event.target.closest("[data-model-profile-edit]");
+    if (editButton) {
+      const profile = profilesCache.find((item) => item.id === editButton.dataset.modelProfileEdit);
+      if (profile) fillForm(profile);
+      return;
+    }
+
+    const activateButton = event.target.closest("[data-model-profile-activate]");
+    if (activateButton) {
+      const response = await fetch(`${profilesUrl}/${encodeURIComponent(activateButton.dataset.modelProfileActivate)}/activate`, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        window.alert(payload.error || "启用模型失败。");
+        return;
+      }
+      await loadProfiles();
+      return;
+    }
+
+    const deleteButton = event.target.closest("[data-model-profile-delete]");
+    if (deleteButton) {
+      if (!window.confirm("确认删除这条模型配置吗？")) return;
+      const response = await fetch(`${profilesUrl}/${encodeURIComponent(deleteButton.dataset.modelProfileDelete)}`, {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        window.alert(payload.error || "删除模型失败。");
+        return;
+      }
+      await loadProfiles();
+      return;
+    }
+
+    if (event.target.closest("[data-model-profile-new]")) {
+      fillForm(blankProfile());
+    }
+
+    if (event.target.closest("[data-model-profile-test]")) {
+      clearResult();
+      setResult("pending", "正在执行真实连通测试，请稍候...");
+      const response = await fetch(testUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(readFormPayload()),
+      });
+      const payload = await response.json();
+      setResult(payload.ok ? "success" : "error", `${payload.path || "测试"}：${payload.message || "测试失败"}`);
+    }
+  });
+
+  modeSelect?.addEventListener("change", async () => {
+    renderModePanels();
+    clearResult();
+    await refreshBridgeStatus();
+  });
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const editingId = form.dataset.editingId || "";
+    const payload = readFormPayload();
+    const response = await fetch(
+      editingId ? `${profilesUrl}/${encodeURIComponent(editingId)}` : profilesUrl,
+      {
+        method: editingId ? "PATCH" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      setResult("error", result.error || "保存失败。");
+      return;
+    }
+    setResult("success", "模型配置已保存。");
+    await loadProfiles();
+  });
+
+  loadProfiles().catch((error) => {
+    setResult("error", error.message || "模型配置加载失败。");
+  });
 }

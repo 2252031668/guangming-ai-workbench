@@ -116,9 +116,7 @@
       </div>
       {% if pdf_exists %}
       <div class="pdf-toolbar-actions">
-        <button class="ghost-btn small" type="button" data-pdf-prev>上一页</button>
         <span class="pdf-page-state"><b data-pdf-page>1</b> / <b data-pdf-pages>?</b></span>
-        <button class="ghost-btn small" type="button" data-pdf-next>下一页</button>
         <button class="ghost-btn small" type="button" data-pdf-zoom-out>-</button>
         <span class="pdf-scale-state" data-pdf-scale>100%</span>
         <button class="ghost-btn small" type="button" data-pdf-zoom-in>+</button>
@@ -220,11 +218,13 @@
       data-reading-chat-form
       data-status-url="{{ url_for('reading_chat_status', project_id=current_project.id, paper_id=paper.paper_id) }}"
       data-stop-url="{{ url_for('stop_reading_chat', project_id=current_project.id, paper_id=paper.paper_id) }}"
+      data-compact-url="{{ url_for('compact_reading_chat', project_id=current_project.id, paper_id=paper.paper_id) }}"
       data-reset-url="{{ url_for('reset_reading_chat', project_id=current_project.id, paper_id=paper.paper_id) }}">
       <div class="reading-attachment-tray" data-reading-attachment-tray></div>
       <textarea name="user_question" placeholder="围绕当前论文提问，例如：请解释这篇论文的方法流程，并指出适合写进综述的贡献点。" {% if active_reading_chat_task %}readonly{% endif %}></textarea>
       <div class="reading-chat-controls">
         <button class="reset-chat-btn" type="button" data-start-reading-screenshot>截图</button>
+        <button class="reset-chat-btn" type="button" data-compact-reading-chat aria-label="压缩记忆" title="压缩当前 Codex 论文研读线程记忆">压缩记忆</button>
         <button class="reset-chat-btn" type="button" data-reset-reading-chat>重置</button>
         <button class="send-btn {% if active_reading_chat_task %}stop-send-btn{% endif %}" type="{{ 'button' if active_reading_chat_task else 'submit' }}" {% if active_reading_chat_task %}data-stop-reading-chat title="停止本次问答" aria-label="停止本次问答"{% else %}title="发送论文问题" aria-label="发送论文问题"{% endif %}>
           {% if active_reading_chat_task %}<span class="stop-icon"></span>{% else %}➤{% endif %}

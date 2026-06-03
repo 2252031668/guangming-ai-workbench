@@ -8,7 +8,7 @@ from typing import Any
 from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, TextInput
 from openai_codex.generated.v2_all import ReasoningSummary
 
-from services.codex_runner import build_config_overrides, read_json
+from services.codex_runner import build_config_overrides, friendly_codex_error, load_runtime_config, run_thread_turn_with_diagnostics
 
 
 def paper_context_line(paper: dict[str, Any]) -> str:
@@ -54,7 +54,7 @@ def recommend_matrix_fields(
     papers: list[dict[str, Any]],
     existing_fields: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
-    config = read_json(repo_dir / "config" / "codex.local.json")
+    config = load_runtime_config(repo_dir)
     provider = config.get("model_provider") or "custom"
     codex_home = repo_dir / "instance" / "codex-home-web"
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -101,10 +101,12 @@ def recommend_matrix_fields(
             model_provider=provider,
             ephemeral=True,
         )
-        result = thread.run(
+        result = run_thread_turn_with_diagnostics(
+            thread,
             [TextInput(prompt)],
-            approval_mode=ApprovalMode.deny_all,
-            sandbox=Sandbox.full_access,
             summary=ReasoningSummary(root="concise"),
         )
-    return parse_json_array(result.final_response or "")
+    if not result.final_response:
+        detail = result.diagnostics.get("error") or "Codex turn 已完成，但没有收到任何 assistant 文本。"
+        raise RuntimeError(friendly_codex_error(RuntimeError(detail)))
+    return parse_json_array(result.final_response)

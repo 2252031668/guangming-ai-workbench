@@ -198,9 +198,11 @@
       data-writing-chat-form
       data-status-url="{{ url_for('writing_chat_status', project_id=current_project.id) }}"
       data-stop-url="{{ url_for('stop_writing_chat', project_id=current_project.id) }}"
+      data-compact-url="{{ url_for('compact_writing_chat', project_id=current_project.id) }}"
       data-reset-url="{{ url_for('reset_writing_chat', project_id=current_project.id) }}">
       <textarea name="user_question" placeholder="围绕当前阶段提问或下达写作任务。"{% if active_writing_task %} readonly{% endif %}></textarea>
       <div class="writing-chat-controls">
+        <button class="reset-chat-btn" type="button" data-compact-writing-chat aria-label="压缩记忆" title="压缩当前 Codex 综述写作线程记忆">压缩记忆</button>
         <button class="reset-chat-btn" type="button" data-reset-writing-chat>重置</button>
         <button class="send-btn {% if active_writing_task %}stop-send-btn{% endif %}" type="{{ 'button' if active_writing_task else 'submit' }}" {% if active_writing_task %}data-stop-writing-chat title="停止本次任务" aria-label="停止本次任务"{% else %}title="发送写作任务" aria-label="发送写作任务"{% endif %}>
           {% if active_writing_task %}<span class="stop-icon"></span>{% else %}➤{% endif %}

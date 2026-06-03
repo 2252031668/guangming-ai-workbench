@@ -1,18 +1,33 @@
 from __future__ import annotations
 
 import json
+import socket
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, SkillInput, TextInput
-from openai_codex._run import _collect_turn_result
 from openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
+    AgentMessageThreadItem,
     CommandExecutionThreadItem,
     ItemCompletedNotification,
     ReasoningSummary,
     ReasoningSummaryTextDeltaNotification,
     ReasoningTextDeltaNotification,
+    ThreadItem,
+    ThreadTokenUsage,
+    ThreadTokenUsageUpdatedNotification,
+    TurnCompletedNotification,
+    TurnStatus,
+)
+from services.bridge_manager import BridgeError, start_bridge
+from services.model_profiles import (
+    PROFILE_MODE_BRIDGE,
+    get_active_model_profile,
 )
 
 
@@ -26,6 +41,35 @@ SEARCH_MODE_LABELS = {
     SEARCH_MODE_QUICK: "快速检索",
     SEARCH_MODE_DEEP: "深度检索",
 }
+
+MINIMAL_CONNECTIVITY_PROMPT = "请只回答“正常”两个字。"
+
+
+@dataclass(slots=True)
+class CodexTurnDiagnostics:
+    turn_id: str
+    status: str
+    error: str
+    final_response: str
+    delta_text: str
+    items: list[ThreadItem]
+    usage: ThreadTokenUsage | None
+    diagnostics: dict[str, Any]
+
+    def to_api_payload(self) -> dict[str, Any]:
+        return {
+            "turn_id": self.turn_id,
+            "turn_status": self.status,
+            "assistant_text": self.final_response,
+            "usage": model_to_json(self.usage),
+            "diagnostics": self.diagnostics,
+        }
+
+
+class CodexTurnError(RuntimeError):
+    def __init__(self, message: str, diagnostics: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -42,11 +86,174 @@ def search_mode_label(value: str | None) -> str:
     return SEARCH_MODE_LABELS.get(normalize_search_mode(value), SEARCH_MODE_LABELS[SEARCH_MODE_DEEP])
 
 
+def model_to_json(value: Any) -> Any:
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump(by_alias=True, exclude_none=True, mode="json")
+    return value
+
+
+def item_root(item: ThreadItem) -> Any:
+    return item.root if hasattr(item, "root") else item
+
+
+def item_summary(item: ThreadItem) -> dict[str, Any]:
+    root = item_root(item)
+    item_type = str(getattr(root, "type", type(root).__name__))
+    summary: dict[str, Any] = {
+        "type": item_type,
+        "id": str(getattr(root, "id", "")),
+    }
+    if isinstance(root, AgentMessageThreadItem):
+        summary["phase"] = root.phase.value if root.phase else ""
+        summary["text_preview"] = root.text[:500]
+    elif isinstance(root, CommandExecutionThreadItem):
+        summary["status"] = root.status.value
+    return summary
+
+
+def final_response_from_items(items: list[ThreadItem]) -> str:
+    last_unknown_phase = ""
+    for item in reversed(items):
+        root = item_root(item)
+        if not isinstance(root, AgentMessageThreadItem):
+            continue
+        phase = root.phase.value if root.phase else ""
+        if phase == "final_answer":
+            return root.text or ""
+        if not phase and not last_unknown_phase:
+            last_unknown_phase = root.text or ""
+    return last_unknown_phase
+
+
+def collect_codex_turn_with_diagnostics(
+    stream: Iterator[Any],
+    *,
+    turn_id: str,
+    on_event: Callable[[Any], None] | None = None,
+) -> CodexTurnDiagnostics:
+    completed: TurnCompletedNotification | None = None
+    items: list[ThreadItem] = []
+    usage: ThreadTokenUsage | None = None
+    deltas: list[str] = []
+
+    for event in stream:
+        if on_event:
+            on_event(event)
+        payload = event.payload
+        if isinstance(payload, AgentMessageDeltaNotification) and payload.turn_id == turn_id:
+            deltas.append(payload.delta)
+            continue
+        if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn_id:
+            items.append(payload.item)
+            continue
+        if isinstance(payload, ThreadTokenUsageUpdatedNotification) and payload.turn_id == turn_id:
+            usage = payload.token_usage
+            continue
+        if isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn_id:
+            completed = payload
+
+    if completed is None:
+        diagnostics = {
+            "turn_id": turn_id,
+            "item_count": len(items),
+            "delta_preview": "".join(deltas).strip()[:1000],
+            "items": [item_summary(item) for item in items[-8:]],
+        }
+        raise CodexTurnError("没有收到 Codex turn completed 事件。", diagnostics)
+
+    turn = completed.turn
+    status = turn.status.value if hasattr(turn.status, "value") else str(turn.status)
+    error = turn.error.message if turn.error is not None and turn.error.message else ""
+    text_from_items = final_response_from_items(items)
+    delta_text = "".join(deltas).strip()
+    final_response = (text_from_items or delta_text).strip()
+    diagnostics = {
+        "turn_id": turn_id,
+        "status": status,
+        "error": error,
+        "item_count": len(items),
+        "agent_delta_chars": len(delta_text),
+        "items": [item_summary(item) for item in items[-8:]],
+    }
+    if turn.status == TurnStatus.failed:
+        raise CodexTurnError(error or f"Codex turn failed: {status}", diagnostics)
+    return CodexTurnDiagnostics(
+        turn_id=turn_id,
+        status=status,
+        error=error,
+        final_response=final_response,
+        delta_text=delta_text,
+        items=items,
+        usage=usage,
+        diagnostics=diagnostics,
+    )
+
+
+def run_thread_turn_with_diagnostics(
+    thread: Any,
+    turn_input: Any,
+    *,
+    approval_mode: ApprovalMode = ApprovalMode.deny_all,
+    sandbox: Sandbox = Sandbox.full_access,
+    summary: ReasoningSummary | None = None,
+    on_event: Callable[[Any], None] | None = None,
+) -> CodexTurnDiagnostics:
+    turn = thread.turn(
+        turn_input,
+        approval_mode=approval_mode,
+        sandbox=sandbox,
+        summary=summary,
+    )
+    stream = turn.stream()
+    try:
+        return collect_codex_turn_with_diagnostics(stream, turn_id=turn.id, on_event=on_event)
+    finally:
+        stream.close()
+
+
+def is_context_limit_error(message: str) -> bool:
+    text = str(message or "").lower()
+    needles = [
+        "max_seq_len",
+        "context_length_exceeded",
+        "input tokens",
+        "maximum context",
+        "context window",
+        "too many tokens",
+        "tokens has exceeded",
+        "exceeded max",
+    ]
+    return any(item in text for item in needles)
+
+
+def friendly_codex_error(exc: Exception) -> str:
+    message = str(exc)
+    if is_context_limit_error(message):
+        return f"当前线程历史或本轮材料超过上游模型上下文窗口：{message}"
+    return message
+
+
+def wait_for_tcp_port(host: str, port: int, *, timeout_seconds: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.2)
+    if last_error:
+        raise last_error
+
+
 def build_config_overrides(config: dict[str, Any], *, reasoning_effort: str | None = None) -> tuple[str, ...]:
     provider = config.get("model_provider") or "custom"
     base_url = str(config["base_url"]).rstrip("/") + "/"
     effort = reasoning_effort or config.get("reasoning_effort", "high")
-    return (
+    overrides = [
         f'model_provider="{provider}"',
         f'model="{config["model"]}"',
         f'model_reasoning_effort="{effort}"',
@@ -55,7 +262,232 @@ def build_config_overrides(config: dict[str, Any], *, reasoning_effort: str | No
         f'model_providers.{provider}.wire_api="{config.get("wire_api", "responses")}"',
         f"model_providers.{provider}.requires_openai_auth=true",
         f'model_providers.{provider}.base_url="{base_url}"',
+    ]
+    if int(config.get("context_window") or 0) > 0:
+        overrides.append(f'model_context_window={int(config["context_window"])}')
+    if int(config.get("max_output_tokens") or 0) > 0:
+        overrides.append(f'model_max_output_tokens={int(config["max_output_tokens"])}')
+    return tuple(overrides)
+
+
+def profile_runtime_config(repo_dir: Path, profile: dict[str, Any], *, bridge_trace_enabled: bool = False) -> dict[str, Any]:
+    mode = profile.get("mode")
+    base_url = str(profile.get("base_url") or "").rstrip("/")
+    api_key = str(profile.get("api_key") or "")
+    provider = f"profile_{profile.get('id', 'custom').replace('-', '_')}"
+    runtime = {
+        "profile_id": profile.get("id"),
+        "profile_name": profile.get("name"),
+        "mode": mode,
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": profile.get("model") or "",
+        "model_provider": provider,
+        "wire_api": "responses",
+        "reasoning_effort": profile.get("reasoning_effort_default") or "high",
+        "context_window": int(profile.get("context_window") or 0),
+        "max_output_tokens": int(profile.get("max_output_tokens") or 0),
+        "disable_response_storage": bool(profile.get("disable_response_storage", True)),
+        "bridge": None,
+    }
+    if mode == PROFILE_MODE_BRIDGE:
+        bridge = start_bridge(repo_dir, profile, trace_enabled=bridge_trace_enabled)
+        runtime["api_key"] = bridge.auth_token
+        runtime["base_url"] = bridge.base_url
+        runtime["bridge"] = {
+            "port": bridge.port,
+            "config_path": str(bridge.config_path),
+            "runtime_dir": str(bridge.runtime_dir),
+        }
+    return runtime
+
+
+def load_runtime_config(repo_dir: Path) -> dict[str, Any]:
+    profile = get_active_model_profile(repo_dir)
+    return profile_runtime_config(repo_dir, profile)
+
+
+def run_connectivity_probe(
+    *,
+    repo_dir: Path,
+    working_dir: Path,
+    profile_payload: dict[str, Any],
+) -> dict[str, Any]:
+    profile = dict(profile_payload)
+    runtime = profile_runtime_config(repo_dir, profile, bridge_trace_enabled=True)
+    provider = runtime.get("model_provider") or "custom"
+    codex_home = repo_dir / "instance" / "codex-home-web"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    codex_config = CodexConfig(
+        cwd=str(working_dir),
+        env={"CODEX_HOME": str(codex_home)},
+        config_overrides=build_config_overrides(runtime, reasoning_effort=runtime.get("reasoning_effort")),
     )
+    try:
+        with Codex(codex_config) as codex:
+            codex.login_api_key(runtime["api_key"])
+            thread = codex.thread_start(
+                cwd=str(working_dir),
+                sandbox=Sandbox.full_access,
+                approval_mode=ApprovalMode.deny_all,
+                model=runtime["model"],
+                model_provider=provider,
+                ephemeral=True,
+            )
+            result = run_thread_turn_with_diagnostics(
+                thread,
+                [TextInput(MINIMAL_CONNECTIVITY_PROMPT)],
+                summary=ReasoningSummary(root="concise"),
+            )
+            if not result.final_response:
+                payload = result.to_api_payload()
+                payload.update(
+                    {
+                        "ok": False,
+                        "path": "本地桥接" if runtime.get("mode") == PROFILE_MODE_BRIDGE else "原生 Responses",
+                        "message": "Codex turn 已完成，但没有收到任何 assistant 文本。",
+                    }
+                )
+                return payload
+        return {
+            "ok": True,
+            "path": "本地桥接" if runtime.get("mode") == PROFILE_MODE_BRIDGE else "原生 Responses",
+            "message": f"测试成功：{result.final_response}",
+            **result.to_api_payload(),
+        }
+    except BridgeError:
+        raise
+    except CodexTurnError as exc:
+        return {
+            "ok": False,
+            "path": "本地桥接" if runtime.get("mode") == PROFILE_MODE_BRIDGE else "原生 Responses",
+            "message": friendly_codex_error(exc),
+            "diagnostics": exc.diagnostics,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "path": "本地桥接" if runtime.get("mode") == PROFILE_MODE_BRIDGE else "原生 Responses",
+            "message": friendly_codex_error(exc),
+        }
+
+
+def run_bridge_responses_probe(
+    *,
+    repo_dir: Path,
+    profile_payload: dict[str, Any],
+) -> dict[str, Any]:
+    profile = dict(profile_payload)
+    if profile.get("mode") != PROFILE_MODE_BRIDGE:
+        return {"ok": False, "path": "Moon Bridge Responses", "message": "原生 Responses 模式不需要本地路由测试。"}
+    bridge = start_bridge(repo_dir, profile, trace_enabled=True)
+    try:
+        wait_for_tcp_port("127.0.0.1", bridge.port)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "path": "Moon Bridge Responses",
+            "message": f"Moon Bridge 已启动但端口暂未就绪：{friendly_codex_error(exc)}",
+            "bridge_runtime": {"port": bridge.port, "config_path": str(bridge.config_path)},
+        }
+    body = json.dumps(
+        {
+            "model": profile.get("model") or "",
+            "input": MINIMAL_CONNECTIVITY_PROMPT,
+            "stream": False,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    try:
+        last_error: Exception | None = None
+        raw = ""
+        for attempt in range(30):
+            try:
+                request = urllib.request.Request(
+                    f"{bridge.base_url.rstrip('/')}/responses",
+                    data=body,
+                    method="POST",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {bridge.auth_token}",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=45) as response:
+                    raw = response.read().decode("utf-8", errors="replace")
+                break
+            except urllib.error.HTTPError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt == 29:
+                    raise
+                time.sleep(0.5)
+        if not raw and last_error:
+            raise last_error
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return {
+            "ok": False,
+            "path": "Moon Bridge Responses",
+            "message": friendly_codex_error(RuntimeError(detail or str(exc))),
+            "bridge_runtime": {"port": bridge.port, "config_path": str(bridge.config_path)},
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "path": "Moon Bridge Responses",
+            "message": friendly_codex_error(exc),
+            "bridge_runtime": {"port": bridge.port, "config_path": str(bridge.config_path)},
+        }
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = {"raw": raw}
+    output_text = str(data.get("output_text") or "").strip() if isinstance(data, dict) else ""
+    if not output_text and isinstance(data, dict):
+        output_parts: list[str] = []
+        for item in data.get("output") or []:
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content") or []:
+                if isinstance(content, dict) and content.get("text"):
+                    output_parts.append(str(content.get("text")))
+        output_text = "".join(output_parts).strip()
+    return {
+        "ok": bool(output_text),
+        "path": "Moon Bridge Responses",
+        "message": f"测试成功：{output_text}" if output_text else "Moon Bridge 返回成功，但 Responses 响应中没有 output_text。",
+        "assistant_text": output_text,
+        "diagnostics": {
+            "response_keys": list(data.keys()) if isinstance(data, dict) else [],
+            "raw_preview": raw[:1000],
+        },
+        "bridge_runtime": {"port": bridge.port, "config_path": str(bridge.config_path)},
+    }
+
+
+def compact_codex_thread(*, repo_dir: Path, working_dir: Path, thread_id: str) -> dict[str, Any]:
+    config = load_runtime_config(repo_dir)
+    provider = config.get("model_provider") or "custom"
+    codex_home = repo_dir / "instance" / "codex-home-web"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    codex_config = CodexConfig(
+        cwd=str(working_dir),
+        env={"CODEX_HOME": str(codex_home)},
+        config_overrides=build_config_overrides(config, reasoning_effort=config.get("reasoning_effort", "high")),
+    )
+    with Codex(codex_config) as codex:
+        codex.login_api_key(config["api_key"])
+        thread = codex.thread_resume(
+            thread_id,
+            cwd=str(working_dir),
+            sandbox=Sandbox.full_access,
+            approval_mode=ApprovalMode.deny_all,
+            model=config["model"],
+            model_provider=provider,
+        )
+        thread.compact()
+    return {"ok": True, "thread_id": thread_id, "message": "已请求 Codex 压缩当前线程记忆。"}
 
 
 def quick_result_schema(run_id: str, user_request: str) -> str:
@@ -196,7 +628,7 @@ def run_literature_search(
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     search_mode = normalize_search_mode(search_mode)
-    config = read_json(repo_dir / "config" / "codex.local.json")
+    config = load_runtime_config(repo_dir)
     provider = config.get("model_provider") or "custom"
     reasoning_effort = "medium" if search_mode == SEARCH_MODE_QUICK else config.get("reasoning_effort", "high")
     codex_home = repo_dir / "instance" / "codex-home-web"
@@ -254,6 +686,10 @@ def run_literature_search(
         "run_record_path": run_record_path,
         "run_record_exists": run_record_path.exists(),
         "search_mode": search_mode,
+        "turn_id": result.turn_id,
+        "turn_status": result.status,
+        "usage": result.to_api_payload().get("usage"),
+        "diagnostics": result.diagnostics,
     }
 
 
@@ -293,9 +729,4 @@ def collect_turn_result_with_progress(stream, *, turn_id: str, progress: Callabl
             if isinstance(item, CommandExecutionThreadItem):
                 emit_once(f"已执行检索辅助命令，状态：{item.status.value}。")
 
-    def observed_stream():
-        for event in stream:
-            observe_event(event)
-            yield event
-
-    return _collect_turn_result(observed_stream(), turn_id=turn_id)
+    return collect_codex_turn_with_diagnostics(stream, turn_id=turn_id, on_event=observe_event)

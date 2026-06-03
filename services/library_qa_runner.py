@@ -6,7 +6,7 @@ from typing import Any, Callable
 from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, TextInput
 from openai_codex.generated.v2_all import ReasoningSummary
 
-from services.codex_runner import build_config_overrides, read_json
+from services.codex_runner import build_config_overrides, friendly_codex_error, load_runtime_config, run_thread_turn_with_diagnostics
 
 
 def format_paper_context(project_dir: Path, papers: list[dict[str, Any]]) -> str:
@@ -87,7 +87,7 @@ def run_library_qa_turn(
     include_paper_context: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    config = read_json(repo_dir / "config" / "codex.local.json")
+    config = load_runtime_config(repo_dir)
     provider = config.get("model_provider") or "custom"
     codex_home = repo_dir / "instance" / "codex-home-web"
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -125,7 +125,8 @@ def run_library_qa_turn(
                 ephemeral=False,
             )
 
-        result = thread.run(
+        result = run_thread_turn_with_diagnostics(
+            thread,
             [
                 TextInput(
                     build_library_qa_prompt(
@@ -136,12 +137,17 @@ def run_library_qa_turn(
                     )
                 )
             ],
-            approval_mode=ApprovalMode.deny_all,
-            sandbox=Sandbox.full_access,
             summary=ReasoningSummary(root="concise"),
         )
 
+    if not result.final_response:
+        detail = result.diagnostics.get("error") or "Codex turn 已完成，但没有收到任何 assistant 文本。"
+        raise RuntimeError(friendly_codex_error(RuntimeError(detail)))
     return {
         "thread_id": thread.id,
-        "assistant_message": result.final_response or "",
+        "assistant_message": result.final_response,
+        "turn_id": result.turn_id,
+        "turn_status": result.status,
+        "usage": result.to_api_payload().get("usage"),
+        "diagnostics": result.diagnostics,
     }

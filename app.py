@@ -16,20 +16,43 @@ from uuid import uuid4
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 
 from services.codex_runner import (
+    BridgeError,
     CodexConfigError,
     SEARCH_MODE_DEEP,
     SEARCH_MODE_QUICK,
+    compact_codex_thread,
+    run_connectivity_probe,
+    run_bridge_responses_probe,
     normalize_search_mode,
     run_literature_search,
     search_mode_label,
 )
+from services.bridge_manager import bridge_status
+from services.chat_code import ChatCodeError, apply_form_chat_settings, generate_chat_code, parse_chat_code
 from services.import_resolver import run_import_resolution
 from services.library_qa_runner import run_library_qa_turn
 from services.matrix_field_recommender import recommend_matrix_fields
+from services.model_profiles import (
+    ModelProfileError,
+    PROFILE_MODE_BRIDGE,
+    PROFILE_MODE_NATIVE,
+    active_profile_summary,
+    create_model_profile,
+    delete_model_profile,
+    ensure_model_profiles,
+    get_active_model_profile,
+    get_model_profile,
+    list_model_profiles,
+    normalize_profile,
+    set_active_model_profile,
+    update_model_profile,
+    validate_profile_payload,
+)
 from services.pdf_resolver import OpenPdfNotFoundError, resolve_open_pdf_url
 from services.reading_chat_runner import run_reading_chat_turn
 from services.reading_matrix_runner import run_reading_matrix_for_paper
 from services.search_normalizer import candidate_keys, merge_search_run_into_candidates
+from services.upstream_chat_tester import UpstreamChatTestError, test_upstream_chat
 from services.writing_runner import run_writing_turn
 
 
@@ -2188,14 +2211,15 @@ def common_context(active: str) -> dict[str, Any]:
         "project": current,
         "current_project": get_current_project(),
         "projects": list_projects(),
-    }
+        "active_model_profile": active_profile_summary(BASE_DIR),
+        }
 
 
 def resolve_next_page(next_page: str | None) -> str:
     page = (next_page or "").strip()
     if page == "home":
         return "index"
-    valid_pages = {"index", "search", "library", "reading", "writing", "history"}
+    valid_pages = {"index", "search", "library", "reading", "writing", "history", "settings_models"}
     return page if page in valid_pages else "index"
 
 
@@ -4310,6 +4334,32 @@ def reset_library_chat(project_id: str):
     return redirect(url_for("library"))
 
 
+@app.route("/projects/<project_id>/library-chat/compact", methods=["POST"])
+def compact_library_chat(project_id: str):
+    current = load_project(project_id)
+    if not current:
+        return jsonify({"ok": False, "error": "project not found"}), 404
+    if project_has_running_library_chat(project_id):
+        return jsonify({"ok": False, "error": "当前有知识库问答正在运行，请完成后再压缩记忆"}), 409
+    state = load_library_chat_state(project_id)
+    thread_id = state.get("thread_id")
+    if not thread_id:
+        return jsonify({"ok": False, "error": "当前还没有可压缩的 Codex 对话线程"}), 400
+    try:
+        result = compact_codex_thread(repo_dir=BASE_DIR, working_dir=project_dir(project_id), thread_id=thread_id)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"压缩记忆失败：{exc}"}), 400
+    divider = {
+        "role": "divider",
+        "content": "记忆已压缩，可以继续沿用当前对话",
+        "created_at": now_iso(),
+        "thread_id": thread_id,
+        "compact": True,
+    }
+    append_library_chat_message(project_id, divider)
+    return jsonify({"ok": True, **result, "messages": load_library_chat(project_id)})
+
+
 @app.route("/projects/<project_id>/papers/<paper_id>/reading-chat/run", methods=["POST"])
 def run_reading_chat(project_id: str, paper_id: str):
     current = load_project(project_id)
@@ -4441,6 +4491,37 @@ def reset_reading_chat(project_id: str, paper_id: str):
         {
             "ok": True,
             "divider": divider,
+            "messages": serialize_reading_chat_messages(project_id, paper_id, load_paper_reading_chat(project_id, paper_id)),
+        }
+    )
+
+
+@app.route("/projects/<project_id>/papers/<paper_id>/reading-chat/compact", methods=["POST"])
+def compact_reading_chat(project_id: str, paper_id: str):
+    if not load_project(project_id) or not project_paper(project_id, paper_id):
+        return jsonify({"ok": False, "error": "paper not found"}), 404
+    if project_has_running_reading_chat(project_id, paper_id):
+        return jsonify({"ok": False, "error": "当前有论文研读问答正在运行，请完成后再压缩记忆"}), 409
+    state = load_paper_reading_chat_state(project_id, paper_id)
+    thread_id = state.get("thread_id")
+    if not thread_id:
+        return jsonify({"ok": False, "error": "当前还没有可压缩的 Codex 论文研读线程"}), 400
+    try:
+        result = compact_codex_thread(repo_dir=BASE_DIR, working_dir=project_dir(project_id), thread_id=thread_id)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"压缩记忆失败：{exc}"}), 400
+    divider = {
+        "role": "divider",
+        "content": "记忆已压缩，可以继续沿用当前论文研读对话",
+        "created_at": now_iso(),
+        "thread_id": thread_id,
+        "compact": True,
+    }
+    append_paper_reading_chat_message(project_id, paper_id, divider)
+    return jsonify(
+        {
+            "ok": True,
+            **result,
             "messages": serialize_reading_chat_messages(project_id, paper_id, load_paper_reading_chat(project_id, paper_id)),
         }
     )
@@ -4657,6 +4738,31 @@ def reset_writing_chat(project_id: str):
     save_writing_chat_state(project_id, {})
     append_writing_chat_message(project_id, divider)
     return jsonify({"ok": True, "divider": divider, "messages": load_writing_chat(project_id)})
+
+
+@app.route("/projects/<project_id>/writing-chat/compact", methods=["POST"])
+def compact_writing_chat(project_id: str):
+    if not load_project(project_id):
+        return jsonify({"ok": False, "error": "project not found"}), 404
+    if project_has_running_writing_chat(project_id):
+        return jsonify({"ok": False, "error": "当前有综述写作任务正在运行，请完成后再压缩记忆"}), 409
+    state = load_writing_chat_state(project_id)
+    thread_id = state.get("thread_id")
+    if not thread_id:
+        return jsonify({"ok": False, "error": "当前还没有可压缩的 Codex 综述写作线程"}), 400
+    try:
+        result = compact_codex_thread(repo_dir=BASE_DIR, working_dir=project_dir(project_id), thread_id=thread_id)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"压缩记忆失败：{exc}"}), 400
+    divider = {
+        "role": "divider",
+        "content": "记忆已压缩，可以继续沿用当前综述写作对话",
+        "created_at": now_iso(),
+        "thread_id": thread_id,
+        "compact": True,
+    }
+    append_writing_chat_message(project_id, divider)
+    return jsonify({"ok": True, **result, "messages": load_writing_chat(project_id)})
 
 
 @app.route("/projects/<project_id>/reading-matrix/fields", methods=["POST"])
@@ -4987,6 +5093,179 @@ def history():
     )
 
 
+@app.route("/settings/models")
+def settings_models():
+    profiles = list_model_profiles(BASE_DIR)
+    active_profile = get_active_model_profile(BASE_DIR)
+    editing_id = request.args.get("profile_id", "").strip()
+    editing_profile = get_model_profile(BASE_DIR, editing_id) if editing_id else None
+    if editing_profile is None:
+        editing_profile = active_profile if active_profile else normalize_profile({}, 0)
+    editing_profile = apply_form_chat_settings(editing_profile)
+    bridge_info = bridge_status(BASE_DIR, editing_profile)
+    return render_template(
+        "settings_models.html",
+        profiles=profiles,
+        active_profile=active_profile,
+        editing_profile=editing_profile,
+        editing_profile_chat_code=generate_chat_code(editing_profile),
+        profile_modes={
+            PROFILE_MODE_NATIVE: "原生 Responses",
+            PROFILE_MODE_BRIDGE: "使用本地路由",
+        },
+        bridge_info=bridge_info,
+        **common_context("settings"),
+    )
+
+
+@app.route("/api/model-profiles")
+def api_model_profiles():
+    state = ensure_model_profiles(BASE_DIR)
+    profiles = [apply_form_chat_settings(profile) for profile in state["profiles"]]
+    return jsonify(
+        {
+            "ok": True,
+            "profiles": [{**profile, "generated_chat_code": generate_chat_code(profile)} for profile in profiles],
+            "active_profile_id": state["active_profile_id"],
+        }
+    )
+
+
+@app.route("/api/model-profiles", methods=["POST"])
+def api_create_model_profile():
+    payload = request.get_json(silent=True) or {}
+    try:
+        if payload.get("mode") == PROFILE_MODE_BRIDGE and payload.get("code_override"):
+            payload = parse_chat_code(str(payload.get("code_override") or ""), payload)
+        profile = create_model_profile(BASE_DIR, payload)
+        return jsonify({"ok": True, "profile": profile})
+    except ChatCodeError as exc:
+        return jsonify({"ok": False, "error": f"代码解析失败：{exc}"}), 400
+    except ModelProfileError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/model-profiles/<profile_id>", methods=["PATCH"])
+def api_update_model_profile(profile_id: str):
+    payload = request.get_json(silent=True) or {}
+    try:
+        if payload.get("mode") == PROFILE_MODE_BRIDGE and payload.get("code_override"):
+            payload = parse_chat_code(str(payload.get("code_override") or ""), payload)
+        profile = update_model_profile(BASE_DIR, profile_id, payload)
+        return jsonify({"ok": True, "profile": profile})
+    except ChatCodeError as exc:
+        return jsonify({"ok": False, "error": f"代码解析失败：{exc}"}), 400
+    except ModelProfileError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/model-profiles/<profile_id>", methods=["DELETE"])
+def api_delete_model_profile(profile_id: str):
+    try:
+        state = delete_model_profile(BASE_DIR, profile_id)
+        return jsonify({"ok": True, "profiles": state["profiles"], "active_profile_id": state["active_profile_id"]})
+    except ModelProfileError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/model-profiles/<profile_id>/activate", methods=["POST"])
+def api_activate_model_profile(profile_id: str):
+    try:
+        state = set_active_model_profile(BASE_DIR, profile_id)
+        return jsonify({"ok": True, "active_profile_id": state["active_profile_id"]})
+    except ModelProfileError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/model-profiles/test", methods=["POST"])
+def api_test_model_profile():
+    payload = request.get_json(silent=True) or {}
+    test_scope = str(payload.get("test_scope") or "full").strip().lower()
+    if test_scope == "upstream":
+        test_scope = "upstream_chat"
+    if test_scope == "full":
+        test_scope = "codex_full"
+    try:
+        profile = validate_profile_payload(payload)
+        source = "表单生成"
+        if profile.get("mode") == PROFILE_MODE_BRIDGE:
+            code_override = str(payload.get("code_override") or "").strip()
+            code_mode = str(payload.get("code_mode") or "generated").strip()
+            if code_override:
+                profile = validate_profile_payload(parse_chat_code(code_override, profile))
+                source = "代码编辑区" if code_mode == "custom" else "表单生成"
+            else:
+                profile = apply_form_chat_settings(profile)
+            if test_scope == "upstream_chat":
+                upstream_result = test_upstream_chat(profile)
+                bridge_info = bridge_status(BASE_DIR, profile)
+                result = {
+                    **upstream_result,
+                    "path": "测试代码（路由前）",
+                    "source": source,
+                    "bridge_status": bridge_info,
+                    "message": upstream_result.get("message") or "上游 Chat Completions 请求成功",
+                }
+            elif test_scope == "bridge_responses":
+                result = run_bridge_responses_probe(
+                    repo_dir=BASE_DIR,
+                    profile_payload=profile,
+                )
+                result["source"] = source
+                result["bridge_status"] = bridge_status(BASE_DIR, profile)
+            else:
+                result = run_connectivity_probe(
+                    repo_dir=BASE_DIR,
+                    working_dir=BASE_DIR,
+                    profile_payload=profile,
+                )
+                result["path"] = "完整 Codex 链路"
+                result["source"] = source
+                result["bridge_status"] = bridge_status(BASE_DIR, profile)
+        else:
+            if test_scope == "bridge_responses":
+                result = {"ok": False, "path": "Moon Bridge Responses", "message": "原生 Responses 模式不需要本地路由测试。", "source": source}
+                return jsonify(result), 400
+            result = run_connectivity_probe(
+                repo_dir=BASE_DIR,
+                working_dir=BASE_DIR,
+                profile_payload=profile,
+            )
+            result["source"] = source
+        status = 200 if result.get("ok") else 400
+        return jsonify(result), status
+    except ChatCodeError as exc:
+        return jsonify({"ok": False, "path": "测试代码（路由前）" if test_scope == "upstream_chat" else "完整 Codex 链路", "source": "代码编辑区", "message": f"代码解析失败：{exc}"}), 400
+    except UpstreamChatTestError as exc:
+        return jsonify({"ok": False, "path": "测试代码（路由前）", "source": "代码编辑区", "message": str(exc)}), 400
+    except (ModelProfileError, BridgeError) as exc:
+        return jsonify({"ok": False, "path": "完整 Codex 链路" if payload.get("mode") == PROFILE_MODE_BRIDGE else "原生 Responses", "message": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "path": "原生 Responses", "message": str(exc)}), 500
+
+
+@app.route("/api/model-profiles/render-chat-code", methods=["POST"])
+def api_render_chat_code():
+    payload = request.get_json(silent=True) or {}
+    try:
+        profile = validate_profile_payload(payload)
+        profile = apply_form_chat_settings(profile)
+        return jsonify({"ok": True, "code": generate_chat_code(profile), "profile": profile})
+    except (ModelProfileError, ChatCodeError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/bridge-status")
+def api_bridge_status():
+    mode = request.args.get("mode", "").strip()
+    profile = get_active_model_profile(BASE_DIR)
+    if mode == PROFILE_MODE_BRIDGE:
+        profile = dict(profile)
+        profile["mode"] = PROFILE_MODE_BRIDGE
+    return jsonify({"ok": True, "status": bridge_status(BASE_DIR, profile)})
+
+
 if __name__ == "__main__":
     ensure_workspace()
+    ensure_model_profiles(BASE_DIR)
     app.run(debug=True, use_reloader=False, host="127.0.0.1", port=5000)
